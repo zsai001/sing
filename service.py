@@ -178,11 +178,27 @@ class ServiceManager:
         """检查服务状态 (is_running, status_text)"""
         if self.paths.os_type == "Darwin":
             try:
-                result = subprocess.run(["launchctl", "list"], capture_output=True, text=True)
-                if self.paths.service_name in result.stdout:
-                    return True, f"{Colors.GREEN}运行中{Colors.NC}"
+                # 检查服务是否已加载
+                result = subprocess.run(["launchctl", "list", self.paths.service_name], 
+                                      capture_output=True, text=True)
+                if result.returncode == 0:
+                    lines = result.stdout.strip().split('\n')
+                    for line in lines:
+                        if self.paths.service_name in line:
+                            parts = line.strip().split()
+                            if len(parts) >= 3:
+                                pid = parts[0]
+                                status = parts[1]
+                                if pid.isdigit():
+                                    return True, f"{Colors.GREEN}运行中{Colors.NC}"
+                                elif pid == "-":
+                                    if status == "0":
+                                        return False, f"{Colors.YELLOW}已加载但未运行{Colors.NC}"
+                                    else:
+                                        return False, f"{Colors.RED}启动失败 (退出码: {status}){Colors.NC}"
+                    return False, f"{Colors.YELLOW}未加载{Colors.NC}"
                 else:
-                    return False, f"{Colors.YELLOW}已停止{Colors.NC}"
+                    return False, f"{Colors.YELLOW}未加载{Colors.NC}"
             except subprocess.CalledProcessError:
                 return False, f"{Colors.RED}检查失败{Colors.NC}"
         else:
