@@ -519,8 +519,19 @@ class MenuSystem:
         self.rich_menu.show_banner()
         
         # 获取节点名称，提供默认值
-        import datetime
-        default_name = f"节点_{datetime.datetime.now().strftime('%m%d_%H%M')}"
+        def get_default_node_name():
+            config = self.node_manager.load_nodes_config()
+            existing_nodes = config.get('nodes', {})
+            counter = 1
+            while True:
+                default_name = f"节点{counter}"
+                # 检查名字是否已存在
+                name_exists = any(node.get('name') == default_name for node in existing_nodes.values())
+                if not name_exists:
+                    return default_name
+                counter += 1
+        
+        default_name = get_default_node_name()
         
         while True:
             node_name = self.rich_menu.prompt_input(f"请输入节点名称 (输入 'q' 退出)", default=default_name)
@@ -650,8 +661,19 @@ class MenuSystem:
         choice = input("请选择 [1-2]: ").strip()
         
         # 获取节点名称
-        import datetime
-        default_name = f"本地节点_{datetime.datetime.now().strftime('%m%d_%H%M')}"
+        def get_default_local_name():
+            config = self.node_manager.load_nodes_config()
+            existing_nodes = config.get('nodes', {})
+            counter = 1
+            while True:
+                default_name = f"本地节点{counter}"
+                # 检查名字是否已存在
+                name_exists = any(node.get('name') == default_name for node in existing_nodes.values())
+                if not name_exists:
+                    return default_name
+                counter += 1
+        
+        default_name = get_default_local_name()
         
         while True:
             node_name = input(f"节点名称 [{default_name}]: ").strip()
