@@ -122,13 +122,58 @@ class MenuSystem:
         else:
             current_display = "无节点"
         
+        # 获取实际服务状态
+        is_running, status_text = self.manager.check_service_status()
+        if is_running:
+            service_status = f"{Colors.GREEN}运行中{Colors.NC}"
+        else:
+            service_status = f"{Colors.RED}未运行{Colors.NC}"
+        
+        # 获取代理端口状态
+        proxy_port_info = self._get_proxy_port_info()
+        
         print(f"{Colors.CYAN}📊 当前状态{Colors.NC}")
         print("┌─────────────────────────────────────────────────────┐")
-        print(f"│ 服务状态: {Colors.YELLOW}未检查{Colors.NC}")
-        print(f"│ 代理端口: {Colors.YELLOW}未配置{Colors.NC}")
+        print(f"│ 服务状态: {service_status}")
+        print(f"│ 代理端口: {proxy_port_info}")
         print(f"│ 当前节点: {Colors.BLUE}{current_display}{Colors.NC}")
         print("└─────────────────────────────────────────────────────┘")
         print()
+    
+    def _get_proxy_port_info(self):
+        """获取代理端口信息"""
+        try:
+            if self.manager.paths.main_config.exists():
+                import json
+                with open(self.manager.paths.main_config, 'r', encoding='utf-8') as f:
+                    config = json.load(f)
+                
+                # 提取入站端口
+                active_ports = []
+                inactive_ports = []
+                
+                for inbound in config.get('inbounds', []):
+                    port = inbound.get('listen_port')
+                    if port:
+                        # 检查端口是否在监听
+                        if self.manager.service_manager.is_port_listening(port):
+                            active_ports.append(str(port))
+                        else:
+                            inactive_ports.append(str(port))
+                
+                if active_ports:
+                    port_info = f"{Colors.GREEN}{','.join(active_ports)}{Colors.NC}"
+                    if inactive_ports:
+                        port_info += f" ({Colors.RED}{','.join(inactive_ports)} 未活动{Colors.NC})"
+                    return port_info
+                elif inactive_ports:
+                    return f"{Colors.RED}{','.join(inactive_ports)} (未活动){Colors.NC}"
+                else:
+                    return f"{Colors.YELLOW}未配置{Colors.NC}"
+            else:
+                return f"{Colors.YELLOW}未配置{Colors.NC}"
+        except Exception:
+            return f"{Colors.RED}获取失败{Colors.NC}"
     
     def _quick_test(self):
         """快速测试连接"""
