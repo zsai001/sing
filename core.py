@@ -364,9 +364,22 @@ class SingToolManager:
         
         if node_type in ['trojan', 'vless', 'shadowsocks']:
             # 远程节点 - 生成客户端配置
-            selected_nodes = [node_info['config']]
-            selected_nodes[0]['name'] = node_info['name']
-            selected_nodes[0]['type'] = node_type
+            node_config = node_info['config'].copy()
+            node_config['name'] = node_info['name']
+            node_config['type'] = node_type
+            
+            # 确保包含TLS设置
+            if 'tls' in node_info['config']:
+                node_config.update(node_info['config']['tls'])
+                # 从节点配置的TLS设置中获取skip_cert_verify
+                node_config['skip_cert_verify'] = node_info['config']['tls'].get('insecure', True)
+                node_config['sni'] = node_info['config']['tls'].get('server_name', node_config.get('server', ''))
+            
+            # 确保包含传输设置
+            if 'transport' in node_config:
+                node_config['transport'] = node_config['transport']
+            
+            selected_nodes = [node_config]
             config = self.config_manager.generate_local_proxy_config(selected_nodes)
         elif node_type in ['local_server']:
             # 本地服务器 - 生成服务器配置

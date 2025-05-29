@@ -48,9 +48,18 @@ class ConfigManager:
                     "tls": {
                         "enabled": True,
                         "server_name": node.get('sni', node['server']),
-                        "insecure": node.get('skip_cert_verify', False)
+                        "insecure": node.get('skip_cert_verify', True)
                     }
                 }
+                
+                # 添加WebSocket传输配置
+                if 'transport' in node and node['transport'].get('type') == 'ws':
+                    outbound["transport"] = {
+                        "type": "ws",
+                        "path": node['transport'].get('path', '/'),
+                        "headers": node['transport'].get('headers', {})
+                    }
+                    
             elif node['type'] == 'vless':
                 outbound = {
                     "type": "vless",
@@ -62,9 +71,24 @@ class ConfigManager:
                     "tls": {
                         "enabled": True,
                         "server_name": node.get('sni', node['server']),
-                        "insecure": node.get('skip_cert_verify', False)
+                        "insecure": node.get('skip_cert_verify', True)
                     }
                 }
+                
+                # 添加传输配置
+                if 'transport' in node:
+                    if node['transport'].get('type') == 'ws':
+                        outbound["transport"] = {
+                            "type": "ws",
+                            "path": node['transport'].get('path', '/'),
+                            "headers": node['transport'].get('headers', {})
+                        }
+                    elif node['transport'].get('type') == 'grpc':
+                        outbound["transport"] = {
+                            "type": "grpc",
+                            "service_name": node['transport'].get('service_name', '')
+                        }
+                        
             elif node['type'] == 'shadowsocks':
                 outbound = {
                     "type": "shadowsocks",
@@ -103,36 +127,17 @@ class ConfigManager:
                 "listen_port": 7890,
                 "sniff": True,
                 "sniff_override_destination": True
-            },
-            {
-                "type": "tun",
-                "tag": "tun-in",
-                "inet4_address": "172.19.0.1/30",
-                "inet6_address": "fdfe:dcba:9876::1/126",
-                "mtu": 9000,
-                "auto_route": True,
-                "strict_route": True,
-                "sniff": True,
-                "endpoint_independent_nat": False,
-                "stack": "system",
-                "platform": {
-                    "http_proxy": {
-                        "enabled": True,
-                        "server": "127.0.0.1",
-                        "server_port": 7890
-                    }
-                }
             }
         ]
         
-        # 生成路由规则
+        # 生成路由规则（移除已弃用的geoip和geosite）
         route_rules = [
             {"ip_cidr": ["224.0.0.0/3", "ff00::/8"], "outbound": "block"},
             {"ip_cidr": ["127.0.0.0/8", "169.254.0.0/16", "224.0.0.0/4", "::1/128", "fc00::/7", "fe80::/10", "ff00::/8"], "outbound": "direct"},
             {"ip_cidr": ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"], "outbound": "direct"},
             {"domain_keyword": ["cn", "china"], "outbound": "direct"},
-            {"geosite": "cn", "outbound": "direct"},
-            {"geoip": "cn", "outbound": "direct"}
+            {"domain_suffix": [".cn", ".中国", ".公司", ".网络"], "outbound": "direct"},
+            {"domain": ["qq.com", "baidu.com", "taobao.com", "tmall.com", "jd.com"], "outbound": "direct"}
         ]
         
         config = {
@@ -146,8 +151,6 @@ class ConfigManager:
                     "external_controller": "127.0.0.1:9090",
                     "external_ui": "ui",
                     "secret": "",
-                    "external_ui_download_url": "",
-                    "external_ui_download_detour": "",
                     "default_mode": "rule"
                 },
                 "cache_file": {
@@ -163,7 +166,7 @@ class ConfigManager:
                     {"tag": "local", "address": "223.5.5.5", "detour": "direct"}
                 ],
                 "rules": [
-                    {"geosite": "cn", "server": "local"},
+                    {"domain_suffix": [".cn", ".中国"], "server": "local"},
                     {"clash_mode": "direct", "server": "local"},
                     {"clash_mode": "global", "server": "cloudflare"}
                 ],
