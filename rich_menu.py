@@ -63,9 +63,9 @@ class RichMenu:
             exit_text: str 退出选项文本
         """
         menu_table = Table.grid(padding=1)
-        menu_table.add_column("编号", style="white", no_wrap=True)
-        menu_table.add_column("功能", style="cyan", no_wrap=True)
-        menu_table.add_column("描述", style="white")
+        menu_table.add_column("编号", style="white", no_wrap=True, width=3)
+        menu_table.add_column("功能", style="cyan", no_wrap=True, min_width=16)
+        menu_table.add_column("描述", style="white", min_width=20)
         
         for item in items:
             if len(item) == 3:
@@ -200,9 +200,9 @@ if __name__ == "__main__":
         ("1", "🚀 快速操作", "一键测试、修复、配置向导"),
         ("2", "📡 节点管理", "添加、删除、切换、测速节点"),
         ("3", "🔀 分流管理", "路由规则、自定义规则配置"),
-        ("4", "⚙️  系统管理", "服务控制、配置、日志查看"),
+        ("4", "⚙️ 系统管理", "服务控制、配置、日志查看"),
         ("5", "🔧 高级配置", "端口、DNS、TUN、API设置"),
-        ("6", "🛠️  系统工具", "安装、卸载、诊断、帮助")
+        ("6", "🛠️ 系统工具", "安装、卸载、诊断、帮助")
     ]
     
     menu.show_menu("🎯 主菜单 - 请选择功能分类", main_items)
