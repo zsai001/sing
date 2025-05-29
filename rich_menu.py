@@ -64,8 +64,8 @@ class RichMenu:
         """
         menu_table = Table.grid(padding=1)
         menu_table.add_column("编号", style="white", no_wrap=True, width=3)
-        menu_table.add_column("功能", style="cyan", no_wrap=True, min_width=16)
-        menu_table.add_column("描述", style="white", min_width=20)
+        menu_table.add_column("功能", style="cyan", no_wrap=True, width=18)
+        menu_table.add_column("描述", style="white")
         
         for item in items:
             if len(item) == 3:

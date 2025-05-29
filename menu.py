@@ -518,9 +518,15 @@ class MenuSystem:
         self.rich_menu.clear()
         self.rich_menu.show_banner()
         
-        # 获取节点名称
+        # 获取节点名称，提供默认值
+        import datetime
+        default_name = f"节点_{datetime.datetime.now().strftime('%m%d_%H%M')}"
+        
         while True:
-            node_name = self.rich_menu.prompt_choice("请输入节点名称 (输入 'q' 退出)")
+            node_name = self.rich_menu.prompt_input(f"请输入节点名称 (输入 'q' 退出)", default=default_name)
+            if not node_name:  # 处理None或空字符串
+                self.rich_menu.print_warning("节点名称不能为空，请重新输入")
+                continue
             if node_name.lower() in ['q', 'quit', 'exit']:
                 self.rich_menu.print_info("取消添加节点")
                 return
@@ -529,11 +535,11 @@ class MenuSystem:
             self.rich_menu.print_warning("节点名称不能为空，请重新输入")
         
         # 获取节点ID
-        node_id = self.rich_menu.prompt_choice("节点ID (用于标识，留空自动生成)")
-        if not node_id:
-            import re
-            node_id = re.sub(r'[^a-zA-Z0-9_]', '_', node_name.lower())
-            self.rich_menu.print_info(f"自动生成节点ID: {node_id}")
+        import re
+        default_id = re.sub(r'[^a-zA-Z0-9_]', '_', node_name.lower())
+        node_id = self.rich_menu.prompt_input("节点ID (用于标识)", default=default_id)
+        if not node_id:  # 处理None情况
+            node_id = default_id
         
         # 检查节点ID是否已存在
         config = self.node_manager.load_nodes_config()
@@ -644,8 +650,13 @@ class MenuSystem:
         choice = input("请选择 [1-2]: ").strip()
         
         # 获取节点名称
+        import datetime
+        default_name = f"本地节点_{datetime.datetime.now().strftime('%m%d_%H%M')}"
+        
         while True:
-            node_name = input("节点名称: ").strip()
+            node_name = input(f"节点名称 [{default_name}]: ").strip()
+            if not node_name:
+                node_name = default_name
             if node_name.lower() in ['q', 'quit', 'exit']:
                 self.manager.logger.info("取消添加节点")
                 return
@@ -654,11 +665,11 @@ class MenuSystem:
             print(f"{Colors.YELLOW}提示: 节点名称不能为空，请重新输入{Colors.NC}")
         
         # 获取节点ID
-        node_id = input("节点ID (用于标识，留空自动生成): ").strip()
+        import re
+        default_id = re.sub(r'[^a-zA-Z0-9_]', '_', node_name.lower())
+        node_id = input(f"节点ID (用于标识) [{default_id}]: ").strip()
         if not node_id:
-            import re
-            node_id = re.sub(r'[^a-zA-Z0-9_]', '_', node_name.lower())
-            self.manager.logger.info(f"自动生成节点ID: {node_id}")
+            node_id = default_id
         
         # 检查节点ID是否已存在
         config = self.node_manager.load_nodes_config()
