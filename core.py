@@ -368,16 +368,13 @@ class SingToolManager:
             node_config['name'] = node_info['name']
             node_config['type'] = node_type
             
-            # 确保包含TLS设置
+            # 确保包含TLS设置（如果原配置中有的话）
             if 'tls' in node_info['config']:
-                node_config.update(node_info['config']['tls'])
-                # 从节点配置的TLS设置中获取skip_cert_verify
-                node_config['skip_cert_verify'] = node_info['config']['tls'].get('insecure', True)
+                # 从节点配置的TLS设置中获取skip_cert_verify，保持原始配置值
+                node_config['skip_cert_verify'] = node_info['config']['tls'].get('insecure', False)
                 node_config['sni'] = node_info['config']['tls'].get('server_name', node_config.get('server', ''))
             
-            # 确保包含传输设置
-            if 'transport' in node_config:
-                node_config['transport'] = node_config['transport']
+            # 传输设置已经在node_config中，不需要重复设置
             
             selected_nodes = [node_config]
             config = self.config_manager.generate_local_proxy_config(selected_nodes)

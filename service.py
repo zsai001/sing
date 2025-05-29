@@ -182,7 +182,31 @@ class ServiceManager:
                 result = subprocess.run(["launchctl", "list", self.paths.service_name], 
                                       capture_output=True, text=True)
                 if result.returncode == 0:
-                    lines = result.stdout.strip().split('\n')
+                    output = result.stdout.strip()
+                    
+                    # 处理macOS launchctl的输出格式（类似JSON但使用等号）
+                    if output.startswith('{'):
+                        import re
+                        
+                        # 提取PID
+                        pid_match = re.search(r'"PID"\s*=\s*(\d+);', output)
+                        # 提取退出状态
+                        exit_status_match = re.search(r'"LastExitStatus"\s*=\s*(\d+);', output)
+                        
+                        if pid_match:
+                            pid = int(pid_match.group(1))
+                            return True, f"{Colors.GREEN}运行中{Colors.NC}"
+                        elif exit_status_match:
+                            exit_status = int(exit_status_match.group(1))
+                            if exit_status != 0:
+                                return False, f"{Colors.RED}启动失败 (退出码: {exit_status}){Colors.NC}"
+                            else:
+                                return False, f"{Colors.YELLOW}已加载但未运行{Colors.NC}"
+                        else:
+                            return False, f"{Colors.YELLOW}已加载但未运行{Colors.NC}"
+                    
+                    # 处理表格格式输出（旧版本或某些情况）
+                    lines = output.split('\n')
                     for line in lines:
                         if self.paths.service_name in line:
                             parts = line.strip().split()

@@ -33,6 +33,14 @@ class ConfigManager:
             self.logger.error("未选择节点")
             return {}
         
+        # 导入高级配置管理器
+        try:
+            from advanced_config import AdvancedConfigManager
+            advanced_manager = AdvancedConfigManager(self.paths, self.logger)
+        except ImportError:
+            # 如果导入失败，使用默认配置
+            advanced_manager = None
+        
         # 外出连接配置
         outbounds = []
         
@@ -118,35 +126,65 @@ class ConfigManager:
         }
         outbounds.insert(0, selector_outbound)
         
-        # 生成入站配置
-        inbounds = [
-            {
-                "type": "mixed",
-                "tag": "mixed-in",
-                "listen": "127.0.0.1",
-                "listen_port": 7890,
-                "sniff": True,
-                "sniff_override_destination": True
+        # 使用高级配置生成入站配置
+        if advanced_manager:
+            inbounds = advanced_manager.generate_inbounds_config()
+        else:
+            # 默认入站配置
+            inbounds = [
+                {
+                    "type": "mixed",
+                    "tag": "mixed-in",
+                    "listen": "127.0.0.1",
+                    "listen_port": 7890,
+                    "sniff": True,
+                    "sniff_override_destination": True
+                }
+            ]
+        
+        # 使用高级配置生成DNS配置
+        if advanced_manager:
+            dns_config = advanced_manager.generate_dns_config()
+        else:
+            # 默认DNS配置
+            dns_config = {
+                "servers": [
+                    {"tag": "cloudflare", "address": "https://1.1.1.1/dns-query"},
+                    {"tag": "local", "address": "223.5.5.5", "detour": "direct"}
+                ],
+                "rules": [
+                    {"domain_suffix": [".cn", ".中国"], "server": "local"},
+                    {"clash_mode": "direct", "server": "local"},
+                    {"clash_mode": "global", "server": "cloudflare"}
+                ],
+                "final": "cloudflare"
             }
-        ]
         
-        # 生成路由规则（移除已弃用的geoip和geosite）
-        route_rules = [
-            {"ip_cidr": ["224.0.0.0/3", "ff00::/8"], "outbound": "block"},
-            {"ip_cidr": ["127.0.0.0/8", "169.254.0.0/16", "224.0.0.0/4", "::1/128", "fc00::/7", "fe80::/10", "ff00::/8"], "outbound": "direct"},
-            {"ip_cidr": ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"], "outbound": "direct"},
-            {"domain_keyword": ["cn", "china"], "outbound": "direct"},
-            {"domain_suffix": [".cn", ".中国", ".公司", ".网络"], "outbound": "direct"},
-            {"domain": ["qq.com", "baidu.com", "taobao.com", "tmall.com", "jd.com"], "outbound": "direct"}
-        ]
+        # 使用高级配置生成路由配置
+        if advanced_manager:
+            route_config = advanced_manager.generate_route_config()
+        else:
+            # 默认路由配置
+            route_rules = [
+                {"ip_cidr": ["224.0.0.0/3", "ff00::/8"], "outbound": "block"},
+                {"ip_cidr": ["127.0.0.0/8", "169.254.0.0/16", "224.0.0.0/4", "::1/128", "fc00::/7", "fe80::/10", "ff00::/8"], "outbound": "direct"},
+                {"ip_cidr": ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"], "outbound": "direct"},
+                {"domain_keyword": ["cn", "china"], "outbound": "direct"},
+                {"domain_suffix": [".cn", ".中国", ".公司", ".网络"], "outbound": "direct"},
+                {"domain": ["qq.com", "baidu.com", "taobao.com", "tmall.com", "jd.com"], "outbound": "direct"}
+            ]
+            route_config = {
+                "rules": route_rules,
+                "final": "🚀 节点选择",
+                "auto_detect_interface": True
+            }
         
-        config = {
-            "log": {
-                "level": "info",
-                "timestamp": True,
-                "output": str(self.paths.log_dir / "sing-box.log")
-            },
-            "experimental": {
+        # 使用高级配置生成实验性功能配置
+        if advanced_manager:
+            experimental_config = advanced_manager.generate_experimental_config()
+        else:
+            # 默认实验性配置
+            experimental_config = {
                 "clash_api": {
                     "external_controller": "127.0.0.1:9090",
                     "external_ui": "ui",
@@ -159,26 +197,19 @@ class ConfigManager:
                     "cache_id": "default",
                     "store_fakeip": False
                 }
+            }
+        
+        config = {
+            "log": {
+                "level": "info",
+                "timestamp": True,
+                "output": str(self.paths.log_dir / "sing-box.log")
             },
-            "dns": {
-                "servers": [
-                    {"tag": "cloudflare", "address": "https://1.1.1.1/dns-query"},
-                    {"tag": "local", "address": "223.5.5.5", "detour": "direct"}
-                ],
-                "rules": [
-                    {"domain_suffix": [".cn", ".中国"], "server": "local"},
-                    {"clash_mode": "direct", "server": "local"},
-                    {"clash_mode": "global", "server": "cloudflare"}
-                ],
-                "final": "cloudflare"
-            },
+            "experimental": experimental_config,
+            "dns": dns_config,
             "inbounds": inbounds,
             "outbounds": outbounds,
-            "route": {
-                "rules": route_rules,
-                "final": "🚀 节点选择",
-                "auto_detect_interface": True
-            }
+            "route": route_config
         }
         
         return config
