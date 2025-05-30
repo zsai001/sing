@@ -148,7 +148,6 @@ class MenuSystem:
                 input("按回车键继续...")
             elif choice == "7":
                 self._delete_node_menu()
-                input("按回车键继续...")
             elif choice == "8":
                 self._node_speed_test_menu()
                 input("按回车键继续...")
@@ -775,7 +774,145 @@ class MenuSystem:
     
     def _delete_node_menu(self):
         """删除节点菜单"""
-        self.node_manager.delete_node()
+        config = self.node_manager.load_nodes_config()
+        nodes = config.get('nodes', {})
+        current_node = config.get('current_node')
+        
+        if not nodes:
+            self.rich_menu.print_error("暂无节点可删除")
+            return False
+        
+        while True:
+            self.rich_menu.clear()
+            self.rich_menu.show_banner()
+            
+            # 准备节点列表
+            node_list = []
+            delete_items = []
+            
+            for i, (node_id, node_info) in enumerate(nodes.items(), 1):
+                name = node_info.get('name', node_id)
+                node_type = node_info.get('type', 'unknown')
+                is_current = '●' if node_id == current_node else '○'
+                current_text = ' (当前活动)' if node_id == current_node else ''
+                
+                # 添加到选择列表
+                display_text = f"{is_current} {name} - {node_type}{current_text}"
+                delete_items.append((str(i), display_text, f"删除节点: {name}"))
+                node_list.append((node_id, name, node_type, is_current == '●'))
+            
+            # 显示删除菜单
+            self.rich_menu.show_menu("🗑️ 删除节点 - 请选择要删除的节点", delete_items, exit_text="0. 🔙 返回节点管理")
+            
+            print()
+            self.rich_menu.print_info("● = 当前活动节点  ○ = 其他节点")
+            if current_node:
+                self.rich_menu.print_warning(f"当前活动节点: {current_node}")
+            print()
+            
+            choice = self.rich_menu.prompt_choice(f"请选择要删除的节点 [0-{len(node_list)}]")
+            
+            if choice == "0":
+                return False
+            
+            try:
+                choice_num = int(choice)
+                if 1 <= choice_num <= len(node_list):
+                    selected_node = node_list[choice_num - 1]
+                    target_node_id, target_node_name, node_type, is_current_node = selected_node
+                    
+                    # 确认删除
+                    self.rich_menu.clear()
+                    self.rich_menu.show_banner()
+                    
+                    # 检查是否要删除当前活动节点
+                    if is_current_node:
+                        print()
+                        self.rich_menu.print_warning("⚠️ 警告: 您正在删除当前活动的节点!")
+                        self.rich_menu.print_info("删除后需要选择其他节点作为活动节点")
+                    
+                    # 显示要删除的节点信息
+                    print()
+                    self.rich_menu.print_info("📋 即将删除的节点:")
+                    print(f"  节点名称: {target_node_name}")
+                    print(f"  节点ID: {target_node_id}")
+                    print(f"  节点类型: {node_type}")
+                    
+                    node_info = nodes[target_node_id]
+                    if 'config' in node_info:
+                        config_data = node_info['config']
+                        if 'server' in config_data and 'port' in config_data:
+                            print(f"  服务器: {config_data['server']}:{config_data['port']}")
+                    
+                    print()
+                    # 确认删除
+                    if self.rich_menu.prompt_confirm(f"确定要删除节点 '{target_node_name}' 吗?", default=False):
+                        # 删除节点
+                        del config['nodes'][target_node_id]
+                        
+                        # 如果删除的是当前节点，需要处理当前节点选择
+                        if is_current_node:
+                            remaining_nodes = config.get('nodes', {})
+                            if remaining_nodes:
+                                # 有其他节点，让用户选择新的活动节点
+                                print()
+                                self.rich_menu.print_info("选择新的活动节点:")
+                                
+                                node_items = []
+                                remaining_list = list(remaining_nodes.items())
+                                
+                                for i, (node_id, node_info) in enumerate(remaining_list, 1):
+                                    name = node_info.get('name', node_id)
+                                    node_type = node_info.get('type', 'unknown')
+                                    node_items.append((str(i), f"{name} - {node_type}", f"设为活动节点: {name}"))
+                                
+                                self.rich_menu.show_menu("选择新的活动节点", node_items, exit_text="0. 不设置活动节点")
+                                
+                                new_choice = self.rich_menu.prompt_choice(f"请选择新的活动节点 [0-{len(remaining_list)}]")
+                                
+                                if new_choice != "0":
+                                    try:
+                                        new_choice_num = int(new_choice)
+                                        if 1 <= new_choice_num <= len(remaining_list):
+                                            new_node_id = remaining_list[new_choice_num - 1][0]
+                                            config['current_node'] = new_node_id
+                                            new_node_name = remaining_list[new_choice_num - 1][1].get('name', new_node_id)
+                                            self.rich_menu.print_success(f"已切换到节点: {new_node_name}")
+                                        else:
+                                            config['current_node'] = None
+                                    except ValueError:
+                                        config['current_node'] = None
+                                else:
+                                    config['current_node'] = None
+                            else:
+                                # 没有其他节点了
+                                config['current_node'] = None
+                                self.rich_menu.print_warning("所有节点已删除，当前无活动节点")
+                        
+                        # 保存配置
+                        self.node_manager.save_nodes_config(config)
+                        self.rich_menu.print_success(f"节点 '{target_node_name}' 删除成功")
+                        
+                        # 更新本地变量
+                        nodes = config.get('nodes', {})
+                        current_node = config.get('current_node')
+                        
+                        # 如果没有节点了，退出
+                        if not nodes:
+                            self.rich_menu.print_info("已删除所有节点")
+                            input("按回车键继续...")
+                            return True
+                        
+                        input("按回车键继续...")
+                    else:
+                        self.rich_menu.print_info("取消删除")
+                        input("按回车键继续...")
+                else:
+                    self.rich_menu.print_error(f"请输入 0-{len(node_list)} 之间的数字")
+                    input("按回车键继续...")
+            except ValueError:
+                self.rich_menu.print_error("请输入有效的数字")
+                input("按回车键继续...")
     
     def _start_restart_service(self):
         """启动/重启服务 - 已合并到系统管理菜单"""
