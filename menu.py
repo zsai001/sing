@@ -114,15 +114,17 @@ class MenuSystem:
             node_items = [
                 ("1", "📋 显示节点列表", "查看所有已配置的节点"),
                 ("2", "➕ 添加远程节点", "添加Trojan/VLESS/SS节点"),
-                ("3", "🏠 创建本地节点", "创建本地服务器/客户端节点"),
-                ("4", "🔄 切换节点", "切换到其他节点"),
-                ("5", "🗑️ 删除节点", "删除不需要的节点"),
-                ("6", "🚀 节点测速", "测试节点连接速度和延迟")
+                ("3", "📥 导入节点配置", "从YAML/文本导入多个节点"),
+                ("4", "🔧 修复导入节点", "修复导入节点的配置错误"),
+                ("5", "🏠 创建本地节点", "创建本地服务器/客户端节点"),
+                ("6", "🔄 切换节点", "切换到其他节点"),
+                ("7", "🗑️ 删除节点", "删除不需要的节点"),
+                ("8", "🚀 节点测速", "测试节点连接速度和延迟")
             ]
             
             self.rich_menu.show_menu("📡 节点管理菜单", node_items, exit_text="0. 🔙 返回主菜单")
             
-            choice = self.rich_menu.prompt_choice("请选择操作 [0-6]")
+            choice = self.rich_menu.prompt_choice("请选择操作 [0-8]")
             
             if choice == "0":
                 return
@@ -133,15 +135,21 @@ class MenuSystem:
                 self._add_remote_node_menu()
                 input("按回车键继续...")
             elif choice == "3":
-                self._add_local_node_menu()
+                self._import_node_config_menu()
                 input("按回车键继续...")
             elif choice == "4":
-                self._switch_node_menu()
+                self._fix_import_node_config_menu()
                 input("按回车键继续...")
             elif choice == "5":
-                self._delete_node_menu()
+                self._add_local_node_menu()
                 input("按回车键继续...")
             elif choice == "6":
+                self._switch_node_menu()
+                input("按回车键继续...")
+            elif choice == "7":
+                self._delete_node_menu()
+                input("按回车键继续...")
+            elif choice == "8":
                 self._node_speed_test_menu()
                 input("按回车键继续...")
             else:
@@ -1019,4 +1027,266 @@ class MenuSystem:
             "服务状态": status_text,
             "代理端口": f"[green]{port_info}[/green]" if port_info and "未配置" not in str(port_info) else "[yellow]未配置[/yellow]",
             "当前节点": node_info_text
-        } 
+        }
+
+    def _import_node_config_menu(self):
+        """导入节点配置菜单"""
+        self.rich_menu.clear()
+        self.rich_menu.show_banner()
+        
+        self.rich_menu.print_info("📥 导入节点配置")
+        self.rich_menu.print_info("支持格式: Clash YAML节点配置")
+        print()
+        
+        # 选择导入方式
+        import_items = [
+            ("1", "📝 粘贴配置", "直接粘贴YAML配置内容"),
+            ("2", "📁 从文件导入", "从本地文件导入配置"),
+            ("3", "🌐 从URL导入", "从网络链接导入配置")
+        ]
+        
+        self.rich_menu.show_menu("📥 选择导入方式", import_items, exit_text="0. 🔙 返回节点管理")
+        
+        choice = self.rich_menu.prompt_choice("请选择导入方式 [0-3]")
+        
+        if choice == "0":
+            return
+        elif choice == "1":
+            self._import_from_paste()
+        elif choice == "2":
+            self._import_from_file()
+        elif choice == "3":
+            self._import_from_url()
+        else:
+            self.rich_menu.print_error("无效选项")
+    
+    def _import_from_paste(self):
+        """从粘贴内容导入节点"""
+        self.rich_menu.print_info("请粘贴您的YAML节点配置:")
+        self.rich_menu.print_info("支持格式示例:")
+        self.rich_menu.print_info("- {name: 节点1, type: trojan, server: 1.2.3.4, port: 443, password: xxx}")
+        self.rich_menu.print_info("输入完成后，单独一行输入 'END' 结束")
+        print()
+        
+        lines = []
+        while True:
+            line = input().strip()
+            if line.upper() == 'END':
+                break
+            if line:
+                lines.append(line)
+        
+        if not lines:
+            self.rich_menu.print_warning("未输入任何配置")
+            return
+        
+        config_text = '\n'.join(lines)
+        success_count = self.node_manager.import_nodes_from_yaml(config_text)
+        
+        if success_count > 0:
+            self.rich_menu.print_success(f"成功导入 {success_count} 个节点！")
+            
+            # 询问是否重新生成配置
+            if self.rich_menu.prompt_confirm("是否重新生成配置文件并重启服务?", default=True):
+                self.manager.create_main_config()
+                self.manager.restart_service()
+                self.rich_menu.print_success("配置已更新，服务已重启")
+        else:
+            self.rich_menu.print_error("导入失败，请检查配置格式")
+    
+    def _import_from_file(self):
+        """从文件导入节点"""
+        file_path = self.rich_menu.prompt_input("请输入配置文件路径")
+        if not file_path:
+            return
+        
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                config_text = f.read()
+            
+            success_count = self.node_manager.import_nodes_from_yaml(config_text)
+            
+            if success_count > 0:
+                self.rich_menu.print_success(f"成功导入 {success_count} 个节点！")
+                
+                # 询问是否重新生成配置
+                if self.rich_menu.prompt_confirm("是否重新生成配置文件并重启服务?", default=True):
+                    self.manager.create_main_config()
+                    self.manager.restart_service()
+                    self.rich_menu.print_success("配置已更新，服务已重启")
+            else:
+                self.rich_menu.print_error("导入失败，请检查配置格式")
+                
+        except FileNotFoundError:
+            self.rich_menu.print_error(f"文件不存在: {file_path}")
+        except Exception as e:
+            self.rich_menu.print_error(f"读取文件失败: {str(e)}")
+    
+    def _import_from_url(self):
+        """从URL导入节点"""
+        url = self.rich_menu.prompt_input("请输入配置文件URL")
+        if not url:
+            return
+        
+        try:
+            import requests
+            response = requests.get(url, timeout=10)
+            response.raise_for_status()
+            config_text = response.text
+            
+            success_count = self.node_manager.import_nodes_from_yaml(config_text)
+            
+            if success_count > 0:
+                self.rich_menu.print_success(f"成功导入 {success_count} 个节点！")
+                
+                # 询问是否重新生成配置
+                if self.rich_menu.prompt_confirm("是否重新生成配置文件并重启服务?", default=True):
+                    self.manager.create_main_config()
+                    self.manager.restart_service()
+                    self.rich_menu.print_success("配置已更新，服务已重启")
+            else:
+                self.rich_menu.print_error("导入失败，请检查配置格式")
+                
+        except Exception as e:
+            self.rich_menu.print_error(f"从URL导入失败: {str(e)}")
+    
+    def _fix_import_node_config_menu(self):
+        """修复导入节点配置菜单"""
+        self.rich_menu.clear()
+        self.rich_menu.show_banner()
+        
+        self.rich_menu.print_info("🔧 修复导入节点配置")
+        self.rich_menu.print_info("该功能将尝试修复导入节点的配置错误")
+        print()
+        
+        # 选择修复方式
+        fix_items = [
+            ("1", "📝 粘贴配置", "直接粘贴YAML配置内容"),
+            ("2", "📁 从文件导入", "从本地文件导入配置"),
+            ("3", "🌐 从URL导入", "从网络链接导入配置")
+        ]
+        
+        self.rich_menu.show_menu("🔧 选择修复方式", fix_items, exit_text="0. 🔙 返回节点管理")
+        
+        choice = self.rich_menu.prompt_choice("请选择修复方式 [0-3]")
+        
+        if choice == "0":
+            return
+        elif choice == "1":
+            self._fix_import_from_paste()
+        elif choice == "2":
+            self._fix_import_from_file()
+        elif choice == "3":
+            self._fix_import_from_url()
+        else:
+            self.rich_menu.print_error("无效选项")
+    
+    def _fix_import_from_paste(self):
+        """从粘贴内容修复导入节点"""
+        self.rich_menu.print_info("请粘贴您的YAML节点配置:")
+        self.rich_menu.print_info("该功能将使用新的转换逻辑重新导入所有节点")
+        self.rich_menu.print_info("输入完成后，单独一行输入 'END' 结束")
+        print()
+        
+        lines = []
+        while True:
+            line = input().strip()
+            if line.upper() == 'END':
+                break
+            if line:
+                lines.append(line)
+        
+        if not lines:
+            self.rich_menu.print_warning("未输入任何配置")
+            return
+        
+        config_text = '\n'.join(lines)
+        
+        # 先清除所有导入的节点
+        if self.rich_menu.prompt_confirm("是否清除所有现有节点并重新导入?", default=False):
+            self._clear_all_nodes()
+        
+        success_count = self.node_manager.import_nodes_from_yaml(config_text)
+        
+        if success_count > 0:
+            self.rich_menu.print_success(f"成功重新导入 {success_count} 个节点！")
+            
+            # 询问是否重新生成配置
+            if self.rich_menu.prompt_confirm("是否重新生成配置文件并重启服务?", default=True):
+                self.manager.create_main_config()
+                self.manager.restart_service()
+                self.rich_menu.print_success("配置已更新，服务已重启")
+        else:
+            self.rich_menu.print_error("修复失败，请检查配置格式")
+    
+    def _fix_import_from_file(self):
+        """从文件修复导入节点"""
+        file_path = self.rich_menu.prompt_input("请输入配置文件路径")
+        if not file_path:
+            return
+        
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                config_text = f.read()
+            
+            # 先清除所有导入的节点
+            if self.rich_menu.prompt_confirm("是否清除所有现有节点并重新导入?", default=False):
+                self._clear_all_nodes()
+            
+            success_count = self.node_manager.import_nodes_from_yaml(config_text)
+            
+            if success_count > 0:
+                self.rich_menu.print_success(f"成功重新导入 {success_count} 个节点！")
+                
+                # 询问是否重新生成配置
+                if self.rich_menu.prompt_confirm("是否重新生成配置文件并重启服务?", default=True):
+                    self.manager.create_main_config()
+                    self.manager.restart_service()
+                    self.rich_menu.print_success("配置已更新，服务已重启")
+            else:
+                self.rich_menu.print_error("修复失败，请检查配置格式")
+                
+        except FileNotFoundError:
+            self.rich_menu.print_error(f"文件不存在: {file_path}")
+        except Exception as e:
+            self.rich_menu.print_error(f"读取文件失败: {str(e)}")
+    
+    def _fix_import_from_url(self):
+        """从URL修复导入节点"""
+        url = self.rich_menu.prompt_input("请输入配置文件URL")
+        if not url:
+            return
+        
+        try:
+            import requests
+            response = requests.get(url, timeout=10)
+            response.raise_for_status()
+            config_text = response.text
+            
+            # 先清除所有导入的节点
+            if self.rich_menu.prompt_confirm("是否清除所有现有节点并重新导入?", default=False):
+                self._clear_all_nodes()
+            
+            success_count = self.node_manager.import_nodes_from_yaml(config_text)
+            
+            if success_count > 0:
+                self.rich_menu.print_success(f"成功重新导入 {success_count} 个节点！")
+                
+                # 询问是否重新生成配置
+                if self.rich_menu.prompt_confirm("是否重新生成配置文件并重启服务?", default=True):
+                    self.manager.create_main_config()
+                    self.manager.restart_service()
+                    self.rich_menu.print_success("配置已更新，服务已重启")
+            else:
+                self.rich_menu.print_error("修复失败，请检查配置格式")
+                
+        except Exception as e:
+            self.rich_menu.print_error(f"从URL修复失败: {str(e)}")
+    
+    def _clear_all_nodes(self):
+        """清除所有节点"""
+        config = self.node_manager.load_nodes_config()
+        config['nodes'] = {}
+        config['current_node'] = None
+        self.node_manager.save_nodes_config(config)
+        self.rich_menu.print_info("已清除所有现有节点") 

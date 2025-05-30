@@ -88,8 +88,17 @@ class NodeManager:
         print()
         rich_menu.print_info(f"检测到 {len(nodes)} 个节点")
         
+        # 先校验配置
+        config_status = self._validate_sing_box_config()
+        if config_status['valid']:
+            rich_menu.print_success("✓ 当前配置文件校验通过")
+        else:
+            rich_menu.print_error("✗ 当前配置文件校验失败")
+            if config_status['error']:
+                rich_menu.print_warning(f"错误信息: {config_status['error']}")
+        
         # 准备初始表格数据
-        headers = ["状态", "节点ID", "节点名称", "协议", "国别", "延迟", "启用状态"]
+        headers = ["状态", "节点ID", "节点名称", "协议", "国别", "延迟", "配置状态"]
         rows = []
         
         # 先显示基本信息
@@ -100,7 +109,6 @@ class NodeManager:
             
             # 状态标识
             status_style = "[green]●[/green]" if node_id == current_node else "[white]○[/white]"
-            enabled_str = "[green]启用[/green]" if enabled else "[red]禁用[/red]"
             
             # 从缓存获取或设置默认值
             cache_key = self._get_cache_key(node_info)
@@ -127,6 +135,13 @@ class NodeManager:
                 country_emoji = "🔍"
                 latency_str = "[yellow]检测中...[/yellow]"
             
+            # 检查单个节点配置状态
+            node_config_status = self._validate_node_config(node_info)
+            if node_config_status['valid']:
+                config_status_str = "[green]✓ 有效[/green]"
+            else:
+                config_status_str = "[red]✗ 错误[/red]"
+            
             rows.append([
                 status_style,
                 node_id,
@@ -134,7 +149,7 @@ class NodeManager:
                 node_type,
                 country_emoji,
                 latency_str,
-                enabled_str
+                config_status_str
             ])
         
         # 先显示表格
@@ -151,6 +166,19 @@ class NodeManager:
             rich_menu.print_success(f"当前活动节点: {current_node}")
         else:
             rich_menu.print_warning("当前活动节点: 无节点")
+        
+        # 显示配置错误的详细信息
+        error_nodes = []
+        for node_id, node_info in nodes.items():
+            node_config_status = self._validate_node_config(node_info)
+            if not node_config_status['valid']:
+                error_nodes.append((node_id, node_info.get('name', node_id), node_config_status['error']))
+        
+        if error_nodes:
+            print()
+            rich_menu.print_warning("⚠️ 发现配置错误的节点:")
+            for node_id, name, error in error_nodes:
+                rich_menu.print_error(f"  {name} ({node_id}): {error}")
         
         # 异步检测需要更新的节点
         nodes_to_update = []
@@ -1688,4 +1716,368 @@ class NodeManager:
         self.save_nodes_config(config)
         
         self.logger.info(f"✓ Hysteria 节点添加成功: {node_name}")
-        return True 
+        return True
+
+    def import_nodes_from_yaml(self, yaml_text: str) -> int:
+        """从YAML文本导入节点配置
+        
+        Args:
+            yaml_text: YAML格式的节点配置文本
+            
+        Returns:
+            int: 成功导入的节点数量
+        """
+        try:
+            import yaml
+            import re
+            
+            # 尝试解析YAML
+            try:
+                # 处理包含列表的YAML
+                if yaml_text.strip().startswith('-'):
+                    data = yaml.safe_load(yaml_text)
+                else:
+                    # 如果不是列表格式，尝试包装成列表
+                    data = yaml.safe_load(f"proxies:\n{yaml_text}")
+                    if isinstance(data, dict) and 'proxies' in data:
+                        data = data['proxies']
+            except yaml.YAMLError:
+                # 如果YAML解析失败，尝试逐行解析
+                data = []
+                for line in yaml_text.strip().split('\n'):
+                    line = line.strip()
+                    if line.startswith('- {') and line.endswith('}'):
+                        try:
+                            # 移除开头的 "- " 
+                            node_str = line[2:]
+                            node_data = yaml.safe_load(node_str)
+                            data.append(node_data)
+                        except:
+                            continue
+            
+            if not isinstance(data, list):
+                self.logger.error("配置格式错误: 期望节点列表")
+                return 0
+            
+            # 加载现有配置
+            config = self.load_nodes_config()
+            success_count = 0
+            
+            for node_data in data:
+                if not isinstance(node_data, dict):
+                    continue
+                    
+                name = node_data.get('name')
+                node_type = node_data.get('type')
+                
+                if not name or not node_type:
+                    self.logger.warn(f"跳过无效节点: 缺少name或type字段")
+                    continue
+                
+                # 生成唯一的节点ID
+                node_id = re.sub(r'[^a-zA-Z0-9_]', '_', name.lower())
+                original_id = node_id
+                counter = 1
+                while node_id in config.get('nodes', {}):
+                    node_id = f"{original_id}_{counter}"
+                    counter += 1
+                
+                # 转换节点配置
+                converted_node = self._convert_clash_node_to_sing(node_data)
+                if converted_node:
+                    config['nodes'][node_id] = {
+                        'name': name,
+                        'type': node_type,
+                        'protocol': node_type,
+                        'config': converted_node
+                    }
+                    success_count += 1
+                    self.logger.info(f"✓ 导入节点: {name} ({node_type})")
+                else:
+                    self.logger.warn(f"✗ 跳过不支持的节点: {name} ({node_type})")
+            
+            # 保存配置
+            if success_count > 0:
+                self.save_nodes_config(config)
+                self.logger.info(f"成功导入 {success_count} 个节点")
+            
+            return success_count
+            
+        except Exception as e:
+            self.logger.error(f"导入节点失败: {str(e)}")
+            return 0
+    
+    def _convert_clash_node_to_sing(self, clash_node: dict) -> dict:
+        """将Clash格式节点转换为sing-box格式
+        
+        Args:
+            clash_node: Clash格式的节点配置
+            
+        Returns:
+            dict: sing-box格式的节点配置，如果不支持则返回None
+        """
+        node_type = clash_node.get('type', '').lower()
+        
+        if node_type == 'trojan':
+            return self._convert_trojan_node(clash_node)
+        elif node_type == 'vless':
+            return self._convert_vless_node(clash_node)
+        elif node_type == 'vmess':
+            return self._convert_vmess_node(clash_node)
+        elif node_type == 'ss' or node_type == 'shadowsocks':
+            return self._convert_shadowsocks_node(clash_node)
+        else:
+            return None
+    
+    def _convert_trojan_node(self, clash_node: dict) -> dict:
+        """转换Trojan节点"""
+        config = {
+            "type": "trojan",
+            "tag": "proxy",
+            "server": clash_node.get('server'),
+            "port": clash_node.get('port', 443),
+            "password": clash_node.get('password'),
+            "tls": {
+                "enabled": True,
+                "insecure": clash_node.get('skip-cert-verify', False),
+                "server_name": clash_node.get('sni', clash_node.get('servername', ''))
+            }
+        }
+        
+        # 处理WebSocket传输
+        network = clash_node.get('network')
+        if network == 'ws':
+            ws_opts = clash_node.get('ws-opts', {})
+            config["transport"] = {
+                "type": "ws",
+                "path": ws_opts.get('path', '/'),
+                "headers": ws_opts.get('headers', {})
+            }
+        
+        return config
+    
+    def _convert_vless_node(self, clash_node: dict) -> dict:
+        """转换VLESS节点"""
+        config = {
+            "type": "vless",
+            "tag": "proxy",
+            "server": clash_node.get('server'),
+            "port": clash_node.get('port', 443),
+            "uuid": clash_node.get('uuid'),
+            "tls": {
+                "enabled": clash_node.get('tls', True),
+                "insecure": clash_node.get('skip-cert-verify', False),
+                "server_name": clash_node.get('servername', clash_node.get('sni', ''))
+            }
+        }
+        
+        # 处理WebSocket传输
+        network = clash_node.get('network')
+        if network == 'ws':
+            ws_opts = clash_node.get('ws-opts', {})
+            config["transport"] = {
+                "type": "ws",
+                "path": ws_opts.get('path', '/'),
+                "headers": ws_opts.get('headers', {})
+            }
+        
+        return config
+    
+    def _convert_vmess_node(self, clash_node: dict) -> dict:
+        """转换VMess节点"""
+        config = {
+            "type": "vmess",
+            "tag": "proxy",
+            "server": clash_node.get('server'),
+            "port": clash_node.get('port', 443),
+            "uuid": clash_node.get('uuid'),
+            "security": clash_node.get('cipher', 'auto'),
+            "alter_id": clash_node.get('alterId', 0)
+        }
+        
+        # 处理TLS
+        if clash_node.get('tls'):
+            config["tls"] = {
+                "enabled": True,
+                "insecure": clash_node.get('skip-cert-verify', False),
+                "server_name": clash_node.get('servername', clash_node.get('sni', ''))
+            }
+        
+        # 处理WebSocket传输
+        network = clash_node.get('network')
+        if network == 'ws':
+            ws_opts = clash_node.get('ws-opts', {})
+            config["transport"] = {
+                "type": "ws",
+                "path": ws_opts.get('path', '/'),
+                "headers": ws_opts.get('headers', {})
+            }
+        
+        return config
+    
+    def _convert_shadowsocks_node(self, clash_node: dict) -> dict:
+        """转换Shadowsocks节点"""
+        config = {
+            "type": "shadowsocks",
+            "tag": "proxy",
+            "server": clash_node.get('server'),
+            "port": clash_node.get('port', 443),
+            "password": clash_node.get('password'),
+            "method": clash_node.get('cipher', 'aes-256-gcm')
+        }
+        
+        return config
+
+    def _validate_sing_box_config(self) -> dict:
+        """校验sing-box配置文件
+        
+        Returns:
+            dict: {'valid': bool, 'error': str}
+        """
+        try:
+            # 检查配置文件是否存在
+            if not self.paths.main_config.exists():
+                return {'valid': False, 'error': '配置文件不存在'}
+            
+            # 使用sing-box check命令校验配置
+            import subprocess
+            result = subprocess.run(
+                ['/opt/homebrew/bin/sing-box', 'check', '-c', str(self.paths.main_config)],
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+            
+            if result.returncode == 0:
+                return {'valid': True, 'error': None}
+            else:
+                error_msg = result.stderr.strip() or result.stdout.strip()
+                return {'valid': False, 'error': error_msg}
+                
+        except FileNotFoundError:
+            return {'valid': False, 'error': 'sing-box 未安装或不在PATH中'}
+        except subprocess.TimeoutExpired:
+            return {'valid': False, 'error': '校验超时'}
+        except Exception as e:
+            return {'valid': False, 'error': f'校验失败: {str(e)}'}
+    
+    def _validate_node_config(self, node_info: dict) -> dict:
+        """校验单个节点配置
+        
+        Args:
+            node_info: 节点信息
+            
+        Returns:
+            dict: {'valid': bool, 'error': str}
+        """
+        try:
+            node_type = node_info.get('type', '')
+            config = node_info.get('config', {})
+            
+            # 基本字段检查
+            if not node_type:
+                return {'valid': False, 'error': '缺少节点类型'}
+            
+            if not config:
+                return {'valid': False, 'error': '缺少配置信息'}
+            
+            # 根据节点类型进行特定校验
+            if node_type == 'trojan':
+                return self._validate_trojan_config(config)
+            elif node_type == 'vless':
+                return self._validate_vless_config(config)
+            elif node_type == 'vmess':
+                return self._validate_vmess_config(config)
+            elif node_type == 'shadowsocks':
+                return self._validate_shadowsocks_config(config)
+            elif node_type in ['hysteria2', 'tuic', 'reality', 'shadowtls', 'wireguard', 'hysteria']:
+                return self._validate_other_config(config, node_type)
+            elif node_type in ['local_server', 'local_client']:
+                return self._validate_local_config(config, node_type)
+            else:
+                return {'valid': False, 'error': f'不支持的节点类型: {node_type}'}
+                
+        except Exception as e:
+            return {'valid': False, 'error': f'校验出错: {str(e)}'}
+    
+    def _validate_trojan_config(self, config: dict) -> dict:
+        """校验Trojan配置"""
+        required_fields = ['server', 'port', 'password']
+        for field in required_fields:
+            if not config.get(field):
+                return {'valid': False, 'error': f'缺少必需字段: {field}'}
+        
+        # 检查端口范围
+        port = config.get('port')
+        if not isinstance(port, int) or port < 1 or port > 65535:
+            return {'valid': False, 'error': f'端口号无效: {port}'}
+        
+        return {'valid': True, 'error': None}
+    
+    def _validate_vless_config(self, config: dict) -> dict:
+        """校验VLESS配置"""
+        required_fields = ['server', 'port', 'uuid']
+        for field in required_fields:
+            if not config.get(field):
+                return {'valid': False, 'error': f'缺少必需字段: {field}'}
+        
+        # 检查UUID格式
+        uuid_str = config.get('uuid', '')
+        if len(uuid_str) != 36 or uuid_str.count('-') != 4:
+            return {'valid': False, 'error': 'UUID格式无效'}
+        
+        return {'valid': True, 'error': None}
+    
+    def _validate_vmess_config(self, config: dict) -> dict:
+        """校验VMess配置"""
+        required_fields = ['server', 'port', 'uuid']
+        for field in required_fields:
+            if not config.get(field):
+                return {'valid': False, 'error': f'缺少必需字段: {field}'}
+        
+        # 检查UUID格式
+        uuid_str = config.get('uuid', '')
+        if len(uuid_str) != 36 or uuid_str.count('-') != 4:
+            return {'valid': False, 'error': 'UUID格式无效'}
+        
+        return {'valid': True, 'error': None}
+    
+    def _validate_shadowsocks_config(self, config: dict) -> dict:
+        """校验Shadowsocks配置"""
+        required_fields = ['server', 'port', 'password', 'method']
+        for field in required_fields:
+            if not config.get(field):
+                return {'valid': False, 'error': f'缺少必需字段: {field}'}
+        
+        # 检查加密方法
+        valid_methods = [
+            'aes-256-gcm', 'aes-128-gcm', 'chacha20-ietf-poly1305', 
+            'xchacha20-ietf-poly1305', 'aes-256-cfb', 'aes-128-cfb'
+        ]
+        method = config.get('method')
+        if method not in valid_methods:
+            return {'valid': False, 'error': f'不支持的加密方法: {method}'}
+        
+        return {'valid': True, 'error': None}
+    
+    def _validate_other_config(self, config: dict, node_type: str) -> dict:
+        """校验其他类型节点配置"""
+        required_fields = ['server', 'port']
+        for field in required_fields:
+            if not config.get(field):
+                return {'valid': False, 'error': f'缺少必需字段: {field}'}
+        
+        return {'valid': True, 'error': None}
+    
+    def _validate_local_config(self, config: dict, node_type: str) -> dict:
+        """校验本地节点配置"""
+        if node_type == 'local_server':
+            if not config.get('listen_port'):
+                return {'valid': False, 'error': '缺少监听端口'}
+        elif node_type == 'local_client':
+            required_fields = ['server', 'port']
+            for field in required_fields:
+                if not config.get(field):
+                    return {'valid': False, 'error': f'缺少必需字段: {field}'}
+        
+        return {'valid': True, 'error': None}
