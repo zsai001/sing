@@ -39,7 +39,7 @@ class MenuSystem:
                 ("2", "📡 节点管理", "添加、删除、切换、测速节点"),
                 ("3", "🔀 分流管理", "路由规则、自定义规则配置"),
                 ("4", "⚙️ 系统管理", "服务控制、配置、日志查看"),
-                ("5", "🔧 高级配置", "端口、DNS、TUN、API设置"),
+                ("5", "🔧 高级配置", "端口、DNS、TUN、API、系统代理设置"),
                 ("6", "🛠️ 系统工具", "安装、卸载、诊断、帮助")
             ]
             
@@ -263,13 +263,14 @@ class MenuSystem:
                 ("2", "🏠 DNS 和 FakeIP", "DNS服务器和FakeIP配置"),
                 ("3", "🔌 TUN 模式配置", "TUN接口和网络路由配置"),
                 ("4", "📡 Clash API设置", "API控制器和认证配置"),
-                ("5", "👀 查看当前配置", "显示完整的配置文件"),
-                ("6", "💾 配置管理", "备份、恢复、重置配置")
+                ("5", "🌍 系统代理设置", "自动设置系统代理和PAC配置"),
+                ("6", "👀 查看当前配置", "显示完整的配置文件"),
+                ("7", "💾 配置管理", "备份、恢复、重置配置")
             ]
             
             self.rich_menu.show_menu("🔧 高级配置菜单", advanced_items, exit_text="0. 🔙 返回主菜单")
             
-            choice = self.rich_menu.prompt_choice("请选择操作 [0-6]")
+            choice = self.rich_menu.prompt_choice("请选择操作 [0-7]")
             
             if choice == "0":
                 return
@@ -286,9 +287,12 @@ class MenuSystem:
                 self._clash_api_config()
                 input("按回车键继续...")
             elif choice == "5":
-                self._view_current_config()
+                self._system_proxy_config()
                 input("按回车键继续...")
             elif choice == "6":
+                self._view_current_config()
+                input("按回车键继续...")
+            elif choice == "7":
                 self._config_management_menu()
                 input("按回车键继续...")
             else:
@@ -411,26 +415,20 @@ class MenuSystem:
                 with open(self.manager.paths.main_config, 'r', encoding='utf-8') as f:
                     config = json.load(f)
                 
-                # 提取入站端口
-                active_ports = []
-                inactive_ports = []
+                # 提取入站端口信息
+                port_list = []
                 
                 for inbound in config.get('inbounds', []):
+                    inbound_type = inbound.get('type')
                     port = inbound.get('listen_port')
-                    if port:
-                        # 检查端口是否在监听
-                        if self.manager.service_manager.is_port_listening(port):
-                            active_ports.append(str(port))
-                        else:
-                            inactive_ports.append(str(port))
+                    
+                    # 只检测这三种入站协议
+                    if inbound_type in ['mixed', 'http', 'socks'] and port:
+                        port_display = f"{port}（{inbound_type}）"
+                        port_list.append(port_display)
                 
-                if active_ports:
-                    port_info = ','.join(active_ports)
-                    if inactive_ports:
-                        port_info += f" ({','.join(inactive_ports)} 未活动)"
-                    return port_info
-                elif inactive_ports:
-                    return f"{','.join(inactive_ports)} (未活动)"
+                if port_list:
+                    return ' '.join(port_list)
                 else:
                     return "未配置"
             else:
@@ -1160,11 +1158,123 @@ class MenuSystem:
         else:
             node_info_text = "[yellow]未配置[/yellow]"
         
-        return {
+        # 获取高级配置状态
+        advanced_status = self._get_advanced_config_status()
+        
+        status_data = {
             "服务状态": status_text,
             "代理端口": f"[green]{port_info}[/green]" if port_info and "未配置" not in str(port_info) else "[yellow]未配置[/yellow]",
             "当前节点": node_info_text
         }
+        
+        # 添加高级配置状态
+        status_data.update(advanced_status)
+        
+        return status_data
+    
+    def _get_advanced_config_status(self):
+        """获取高级配置状态 - 从sing-box实际配置文件读取"""
+        try:
+            # 读取sing-box实际配置文件
+            config_file = self.manager.paths.config_dir / "config.json"
+            if not config_file.exists():
+                return {
+                    "系统代理": "[yellow]○ 无配置[/yellow]",
+                    "TUN模式": "[yellow]○ 无配置[/yellow]", 
+                    "FakeIP": "[yellow]○ 无配置[/yellow]",
+                    "DNS服务": "[yellow]○ 无配置[/yellow]",
+                    "Clash API": "[yellow]○ 无配置[/yellow]"
+                }
+            
+            import json
+            with open(config_file, 'r', encoding='utf-8') as f:
+                config = json.load(f)
+            
+            # 检查系统代理设置 - 从高级配置文件读取
+            try:
+                advanced_config_file = self.manager.paths.config_dir / "advanced.json"
+                system_proxy_enabled = False
+                
+                if advanced_config_file.exists():
+                    with open(advanced_config_file, 'r', encoding='utf-8') as f:
+                        advanced_config = json.load(f)
+                        system_proxy_config = advanced_config.get("system_proxy", {})
+                        system_proxy_enabled = system_proxy_config.get("enabled", False)
+                
+                if system_proxy_enabled:
+                    system_proxy_status = "[green]✓ 已启用[/green]"
+                else:
+                    system_proxy_status = "[dim]○ 未启用[/dim]"
+            except:
+                system_proxy_status = "[yellow]○ 无配置[/yellow]"
+            
+            # 检查入站配置中的TUN模式
+            inbounds = config.get("inbounds", [])
+            tun_enabled = False
+            
+            for inbound in inbounds:
+                if inbound.get("type") == "tun":
+                    tun_enabled = True
+                    break
+            
+            # TUN模式状态
+            if tun_enabled:
+                tun_status = "[green]✓ 已启用[/green]"
+            else:
+                tun_status = "[dim]○ 未启用[/dim]"
+            
+            # DNS和FakeIP状态
+            dns_config = config.get("dns", {})
+            fakeip_config = dns_config.get("fakeip", {})
+            fakeip_enabled = fakeip_config.get("enabled", False)
+            
+            if fakeip_enabled:
+                fakeip_range = fakeip_config.get("inet4_range", "198.18.0.0/15")
+                fakeip_status = f"[green]✓ {fakeip_range}[/green]"
+            else:
+                fakeip_status = "[dim]○ 未启用[/dim]"
+            
+            # DNS服务状态
+            dns_servers = dns_config.get("servers", [])
+            if dns_servers:
+                primary_server = dns_servers[0]
+                if isinstance(primary_server, dict):
+                    server_tag = primary_server.get("tag", "server1")
+                    if len(dns_servers) > 1:
+                        dns_status = f"[green]✓ {server_tag} +{len(dns_servers)-1}[/green]"
+                    else:
+                        dns_status = f"[green]✓ {server_tag}[/green]"
+                else:
+                    dns_status = f"[green]✓ {len(dns_servers)}个服务器[/green]"
+            else:
+                dns_status = "[dim]○ 默认[/dim]"
+            
+            # Clash API状态
+            experimental = config.get("experimental", {})
+            clash_api = experimental.get("clash_api", {})
+            if clash_api and clash_api.get("external_controller"):
+                controller = clash_api.get("external_controller", "127.0.0.1:9090")
+                clash_status = f"[green]✓ {controller}[/green]"
+            else:
+                clash_status = "[dim]○ 未配置[/dim]"
+            
+            return {
+                "系统代理": system_proxy_status,
+                "TUN模式": tun_status,
+                "FakeIP": fakeip_status,
+                "DNS服务": dns_status,
+                "Clash API": clash_status
+            }
+            
+        except Exception as e:
+            # 如果读取配置失败，返回错误状态
+            return {
+                "系统代理": "[red]✗ 读取失败[/red]",
+                "TUN模式": "[red]✗ 读取失败[/red]",
+                "FakeIP": "[red]✗ 读取失败[/red]",
+                "DNS服务": "[red]✗ 读取失败[/red]",
+                "Clash API": "[red]✗ 读取失败[/red]"
+            }
 
     def _import_node_config_menu(self):
         """导入节点配置菜单"""
@@ -1426,4 +1536,11 @@ class MenuSystem:
         config['nodes'] = {}
         config['current_node'] = None
         self.node_manager.save_nodes_config(config)
-        self.rich_menu.print_info("已清除所有现有节点") 
+        self.rich_menu.print_info("已清除所有现有节点")
+
+    def _system_proxy_config(self):
+        """系统代理配置"""
+        advanced_manager = AdvancedConfigManager(self.manager.paths, self.manager.logger)
+        advanced_manager.configure_system_proxy()
+        self.manager.logger.info("✓ 系统代理配置已保存")
+        input("按回车键继续...") 

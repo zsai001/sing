@@ -517,10 +517,10 @@ class NodeManager:
             
             # 特殊状态
             '本地': ('local', '🏠'),
-            '未知': ('unknown', '🌐')
+            '未知': ('na', '🌐')
         }
         
-        code, emoji = country_map.get(country, ('unknown', '🌐'))
+        code, emoji = country_map.get(country, ('na', '🌐'))
         return f"{code}{emoji}"
     
     def _load_cache(self, cache_file: Path) -> dict:

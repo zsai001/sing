@@ -30,4 +30,4 @@ logs/
 # Temporary files
 *.tmp
 *.bak
-*~ 
+*~ ui/

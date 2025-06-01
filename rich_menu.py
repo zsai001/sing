@@ -36,12 +36,35 @@ class RichMenu:
         Args:
             status_data: dict 状态数据，如 {"服务状态": "运行中", "代理端口": "7890"}
         """
-        status_table = Table.grid(padding=1)
-        status_table.add_column(style="cyan", no_wrap=True)
-        status_table.add_column(style="white")
+        # 分离基础状态和高级配置状态
+        basic_keys = ["服务状态", "代理端口", "当前节点", "系统代理"]
+        advanced_keys = ["TUN模式", "FakeIP", "DNS服务", "Clash API"]
         
-        for key, value in status_data.items():
-            status_table.add_row(f"{key}:", value)
+        # 创建两列表格
+        status_table = Table.grid(padding=2)
+        status_table.add_column("基础状态", style="cyan", no_wrap=True, width=35)
+        status_table.add_column("高级配置", style="cyan", no_wrap=True, width=35)
+        
+        # 创建左列（基础状态）
+        left_column = Table.grid(padding=1)
+        left_column.add_column(style="cyan", no_wrap=True)
+        left_column.add_column(style="white")
+        
+        for key in basic_keys:
+            if key in status_data:
+                left_column.add_row(f"{key}:", status_data[key])
+        
+        # 创建右列（高级配置）
+        right_column = Table.grid(padding=1)
+        right_column.add_column(style="cyan", no_wrap=True)
+        right_column.add_column(style="white")
+        
+        for key in advanced_keys:
+            if key in status_data:
+                right_column.add_row(f"{key}:", status_data[key])
+        
+        # 将两列添加到主表格
+        status_table.add_row(left_column, right_column)
         
         status_panel = Panel(
             status_table,
@@ -191,7 +214,8 @@ if __name__ == "__main__":
     status = {
         "服务状态": "[green]运行中[/green]",
         "代理端口": "[green]7890[/green]",
-        "当前节点": "[blue]ifx (trojan)[/blue]"
+        "当前节点": "[blue]ifx (trojan)[/blue]",
+        "系统代理": "[green]已设置[/green]"
     }
     menu.show_status(status)
     
@@ -201,7 +225,7 @@ if __name__ == "__main__":
         ("2", "📡 节点管理", "添加、删除、切换、测速节点"),
         ("3", "🔀 分流管理", "路由规则、自定义规则配置"),
         ("4", "⚙️ 系统管理", "服务控制、配置、日志查看"),
-        ("5", "🔧 高级配置", "端口、DNS、TUN、API设置"),
+        ("5", "🔧 高级配置", "端口、DNS、TUN、API、系统代理设置"),
         ("6", "🛠️ 系统工具", "安装、卸载、诊断、帮助")
     ]
     

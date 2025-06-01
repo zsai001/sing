@@ -2,8 +2,8 @@
 # -*- coding: utf-8 -*-
 
 """
-核心管理模块 - 主要系统管理功能
-SingTool Core Module
+SingTool核心管理器 - 统一管理所有功能模块
+Core Manager for SingTool
 """
 
 import os
@@ -15,21 +15,47 @@ import socket
 import shutil
 import json
 from datetime import datetime
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
+from threading import Thread, Event
+from pathlib import Path
 from utils import Colors, Logger
 from paths import PathManager
-from config import ConfigManager
+from config_manager import ConfigManager
+from nodes import NodeManager
+from menu import MenuSystem
 from service import ServiceManager
 
 class SingToolManager:
-    """核心管理类 - 协调各个子模块完成系统管理任务"""
+    """SingTool核心管理器"""
     
     def __init__(self):
+        # 初始化路径管理器
         self.paths = PathManager()
-        self.logger = Logger()
+        
+        # 日志记录器（静态类）
+        self.logger = Logger
+        
+        # 初始化配置管理器
         self.config_manager = ConfigManager(self.paths, self.logger)
+        
+        # 初始化节点管理器
+        self.node_manager = NodeManager(self.paths, self.logger)
+        
+        # 初始化菜单系统
+        self.menu = MenuSystem(self, self.node_manager)
+        
+        # sing-box进程相关
+        self.sing_box_process = None
+        self.monitor_thread = None
+        self.stop_monitoring = Event()
+        
+        # 状态标志
+        self.is_running = False
+        
+        # 确保配置目录存在
+        self.config_manager.ensure_config_directories()
+        
         self.service_manager = ServiceManager(self.paths, self.logger)
-        self._ensure_directories()
     
     def _ensure_directories(self):
         """确保必要目录存在"""
@@ -218,9 +244,7 @@ class SingToolManager:
         print("----------------------------------------")
         
         try:
-            from nodes import NodeManager
-            node_manager = NodeManager(self.paths, self.logger)
-            config = node_manager.load_nodes_config()
+            config = self.node_manager.load_nodes_config()
             current_node = config.get('current_node')
             nodes = config.get('nodes', {})
             
@@ -346,9 +370,7 @@ class SingToolManager:
         """创建主配置文件"""
         self.logger.step("生成主配置文件...")
         
-        from nodes import NodeManager
-        node_manager = NodeManager(self.paths, self.logger)
-        config = node_manager.load_nodes_config()
+        config = self.node_manager.load_nodes_config()
         current_node = config.get('current_node')
         nodes = config.get('nodes', {})
         
