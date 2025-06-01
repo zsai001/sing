@@ -240,6 +240,13 @@ class ServiceManager:
         """启动服务"""
         self.logger.step("启动 sing-box 服务...")
         
+        # 检查服务是否已经启动
+        is_running, status_text = self.check_service_status()
+        if is_running:
+            self.logger.info("✓ sing-box 服务已经在运行中")
+            print(f"服务状态: {status_text}")
+            return True
+        
         if not self.check_singbox_installed():
             self.logger.error("sing-box 未安装，请先运行安装")
             return False

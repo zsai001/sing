@@ -1140,8 +1140,8 @@ class MenuSystem:
     def _get_status_data(self):
         """获取状态数据"""
         # 获取服务状态
-        service_status = self.manager.check_service_status()
-        if service_status:
+        is_running, status_text = self.manager.check_service_status()
+        if is_running:
             status_text = "[green]运行中[/green]"
         else:
             status_text = "[red]已停止[/red]"

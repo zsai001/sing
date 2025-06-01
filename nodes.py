@@ -97,18 +97,173 @@ class NodeManager:
             if config_status['error']:
                 rich_menu.print_warning(f"错误信息: {config_status['error']}")
         
-        # 准备初始表格数据
+        # 显示初始表格
+        self._display_nodes_table(nodes, current_node, cache_data, rich_menu)
+        
+        # 显示配置错误的详细信息
+        error_nodes = []
+        for node_id, node_info in nodes.items():
+            node_config_status = self._validate_node_config(node_info)
+            if not node_config_status['valid']:
+                error_nodes.append((node_id, node_info.get('name', node_id), node_config_status['error']))
+        
+        if error_nodes:
+            print()
+            rich_menu.print_warning("⚠️ 发现配置错误的节点:")
+            for node_id, name, error in error_nodes:
+                rich_menu.print_error(f"  {name} ({node_id}): {error}")
+        
+        print()
+        rich_menu.print_info("🔄 开始动态刷新节点状态...")
+        rich_menu.print_warning("按 Ctrl+C 退出监控")
+        print()
+        
+        # 开始动态刷新
+        self._start_dynamic_refresh(nodes, current_node, cache_file, cache_data, rich_menu)
+
+    def _start_dynamic_refresh(self, nodes, current_node, cache_file, cache_data, rich_menu):
+        """开始动态刷新节点状态"""
+        import time
+        import sys
+        import threading
+        import select
+        
+        # 添加停止标志
+        stop_flag = threading.Event()
+        
+        def check_input():
+            """检查用户输入的线程函数"""
+            try:
+                while not stop_flag.is_set():
+                    if sys.stdin in select.select([sys.stdin], [], [], 0.1)[0]:
+                        line = sys.stdin.readline()
+                        if line.strip() == "":  # 检测回车键
+                            stop_flag.set()
+                            break
+            except:
+                pass
+        
+        try:
+            # 启动输入检测线程
+            input_thread = threading.Thread(target=check_input, daemon=True)
+            input_thread.start()
+            
+            # 将节点转换为列表以便按顺序更新
+            node_items = list(nodes.items())
+            
+            for current_index, (node_id, node_info) in enumerate(node_items):
+                # 检查是否需要停止
+                if stop_flag.is_set():
+                    # 清理标准输入缓冲区
+                    import sys
+                    try:
+                        while sys.stdin in select.select([sys.stdin], [], [], 0)[0]:
+                            sys.stdin.readline()
+                    except:
+                        pass
+                    
+                    print()
+                    rich_menu.print_info("✓ 已退出节点监控")
+                    return
+                
+                # 清屏并重新显示更新后的节点表格（标识当前正在刷新的节点）
+                print("\033[H\033[J", end="")
+                
+                # 显示当前时间
+                current_time = time.strftime("%Y-%m-%d %H:%M:%S")
+                rich_menu.print_info(f"📡 节点状态监控 - 最后更新: {current_time}")
+                rich_menu.print_warning("按回车键退出监控")
+                print()
+                
+                # 显示节点表格，标识当前正在刷新的节点
+                self._display_nodes_table(nodes, current_node, cache_data, rich_menu, refreshing_node=node_id)
+                
+                # 在后台静默测试当前节点（获取延时和国别）
+                country, latency = self._test_node_speed_and_country(node_info)
+                
+                # 更新缓存 - 只有在成功获取有效信息时才更新
+                cache_key = self._get_cache_key(node_info)
+                existing_cache = cache_data.get(cache_key, {})
+                
+                # 准备更新的缓存数据
+                updated_cache = {
+                    'timestamp': time.time()
+                }
+                
+                # 只有在获取到有效延迟信息时才更新延迟
+                if latency and latency != '待测试':
+                    updated_cache['latency'] = latency
+                else:
+                    # 保持原有延迟信息
+                    updated_cache['latency'] = existing_cache.get('latency', '待测试')
+                
+                # 只有在获取到有效国别信息时才更新国别
+                if country and country != '未知':
+                    updated_cache['country'] = country
+                else:
+                    # 保持原有国别信息，如果没有原有信息则设为未知
+                    updated_cache['country'] = existing_cache.get('country', '未知')
+                
+                cache_data[cache_key] = updated_cache
+                
+                # 保存缓存
+                self._save_cache(cache_file, cache_data)
+                
+                # 节点间休息1秒（最后一个节点不休息）
+                if current_index < len(node_items) - 1 and not stop_flag.is_set():
+                    time.sleep(1)
+            
+            # 检查是否被中断
+            if stop_flag.is_set():
+                return
+            
+            # 完成所有测试后保持显示，不显示正在刷新的标识
+            print("\033[H\033[J", end="")
+            current_time = time.strftime("%Y-%m-%d %H:%M:%S")
+            rich_menu.print_info(f"📡 节点状态监控 - 最后更新: {current_time}")
+            print()
+            self._display_nodes_table(nodes, current_node, cache_data, rich_menu)
+            print()
+            rich_menu.print_success("🎉 所有节点测试完成！按回车键返回...")
+            
+            # 设置停止标志，停止输入检测线程
+            stop_flag.set()
+            
+            # 等待用户按回车（只需要一次）
+            input()
+            
+        except KeyboardInterrupt:
+            # 设置停止标志
+            stop_flag.set()
+            print()
+            print()
+            rich_menu.print_success("✓ 已退出节点监控")
+        except Exception as e:
+            # 设置停止标志
+            stop_flag.set()
+            print()
+            rich_menu.print_error(f"监控过程中出现错误: {str(e)}")
+        finally:
+            # 确保停止标志被设置
+            stop_flag.set()
+    
+    def _display_nodes_table(self, nodes, current_node, cache_data, rich_menu, refreshing_node=None):
+        """显示节点表格"""
+        # 准备表格数据
         headers = ["状态", "节点ID", "节点名称", "协议", "国别", "延迟", "配置状态"]
         rows = []
         
-        # 先显示基本信息
         for node_id, node_info in nodes.items():
             name = node_info.get('name', node_id)
             node_type = node_info.get('type', 'unknown')
-            enabled = node_info.get('enabled', False)
             
             # 状态标识
-            status_style = "[green]●[/green]" if node_id == current_node else "[white]○[/white]"
+            if node_id == current_node:
+                status_style = "[green]●[/green]"  # 当前活动节点 - 绿点
+            elif node_id == refreshing_node:
+                status_style = "[yellow]●[/yellow]"  # 正在刷新的节点 - 黄点
+            else:
+                status_style = "[white]○[/white]"  # 其他节点 - 白圈
             
             # 从缓存获取或设置默认值
             cache_key = self._get_cache_key(node_info)
@@ -131,9 +286,9 @@ class NodeManager:
                 else:
                     latency_str = f"[red]{latency}[/red]"
             else:
-                # 显示检测中状态
-                country_emoji = "🔍"
-                latency_str = "[yellow]检测中...[/yellow]"
+                # 显示待测试状态
+                country_emoji = "🔍testing"
+                latency_str = "[yellow]待测试[/yellow]"
             
             # 检查单个节点配置状态
             node_config_status = self._validate_node_config(node_info)
@@ -152,7 +307,7 @@ class NodeManager:
                 config_status_str
             ])
         
-        # 先显示表格
+        # 显示表格
         print()
         rich_menu.show_table("📡 节点列表", headers, rows, styles={
             "节点ID": "cyan",
@@ -161,156 +316,231 @@ class NodeManager:
         })
         
         print()
-        rich_menu.print_info("● = 当前节点  ○ = 其他节点")
+        if refreshing_node:
+            rich_menu.print_info("● = 当前节点  ● = 正在刷新  ○ = 其他节点")
+        else:
+            rich_menu.print_info("● = 当前节点  ○ = 其他节点")
         if current_node:
             rich_menu.print_success(f"当前活动节点: {current_node}")
         else:
             rich_menu.print_warning("当前活动节点: 无节点")
-        
-        # 显示配置错误的详细信息
-        error_nodes = []
-        for node_id, node_info in nodes.items():
-            node_config_status = self._validate_node_config(node_info)
-            if not node_config_status['valid']:
-                error_nodes.append((node_id, node_info.get('name', node_id), node_config_status['error']))
-        
-        if error_nodes:
-            print()
-            rich_menu.print_warning("⚠️ 发现配置错误的节点:")
-            for node_id, name, error in error_nodes:
-                rich_menu.print_error(f"  {name} ({node_id}): {error}")
-        
-        # 异步检测需要更新的节点
-        nodes_to_update = []
-        for node_id, node_info in nodes.items():
-            cache_key = self._get_cache_key(node_info)
-            cached_info = cache_data.get(cache_key, {})
-            cache_expired = self._is_cache_expired(cached_info.get('timestamp'))
-            
-            if cache_expired or not cached_info:
-                nodes_to_update.append((node_id, node_info))
-        
-        if nodes_to_update:
-            print()
-            rich_menu.print_info(f"正在后台检测 {len(nodes_to_update)} 个节点的速度和地理位置...")
-            
-            # 启动异步检测
-            self._async_update_nodes(nodes_to_update, cache_file, cache_data)
     
-    def _async_update_nodes(self, nodes_to_update, cache_file, cache_data):
-        """异步更新节点信息"""
+    def _async_update_nodes_with_display(self, nodes_to_update, cache_file, cache_data, all_nodes, current_node, rich_menu):
+        """异步更新节点信息并动态显示进度"""
         import concurrent.futures
-        import sys
+        import time
         
         def update_single_node(node_item):
             node_id, node_info = node_item
             country, latency = self._test_node_speed_and_country(node_info)
             return node_id, country, latency
         
+        total_nodes = len(nodes_to_update)
+        completed_count = 0
+        
+        # 显示进度信息
+        progress_line = f"进度: {completed_count}/{total_nodes} 已完成"
+        print(f"\r{progress_line}", end="", flush=True)
+        
         # 使用线程池异步检测
-        with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
             # 提交所有任务
             future_to_node = {
-                executor.submit(update_single_node, node_item): node_item[0] 
+                executor.submit(update_single_node, node_item): node_item 
                 for node_item in nodes_to_update
             }
             
-            updated_count = 0
             # 处理完成的任务
             for future in concurrent.futures.as_completed(future_to_node):
                 try:
                     node_id, country, latency = future.result()
+                    node_item = future_to_node[future]
+                    node_info = node_item[1]
                     
                     # 更新缓存
-                    cache_key = self._get_cache_key(next(info for nid, info in nodes_to_update if nid == node_id))
+                    cache_key = self._get_cache_key(node_info)
                     cache_data[cache_key] = {
                         'country': country,
                         'latency': latency,
                         'timestamp': time.time()
                     }
                     
-                    updated_count += 1
+                    completed_count += 1
                     
-                    # 显示更新进度
+                    # 显示当前测试结果
                     country_emoji = self._get_country_flag(country)
+                    name = node_info.get('name', node_id)
                     
                     if isinstance(latency, (int, float)):
                         if latency < 100:
-                            latency_display = f"{latency}ms (优秀)"
+                            latency_display = f"[green]{latency}ms[/green] (优秀)"
                         elif latency < 300:
-                            latency_display = f"{latency}ms (良好)"
+                            latency_display = f"[yellow]{latency}ms[/yellow] (良好)"
                         else:
-                            latency_display = f"{latency}ms (较慢)"
+                            latency_display = f"[red]{latency}ms[/red] (较慢)"
                     else:
-                        latency_display = str(latency)
+                        if latency == 'timeout':
+                            latency_display = "[red]超时[/red]"
+                        elif latency == '待测试':
+                            latency_display = "[yellow]检测失败[/yellow]"
+                        else:
+                            latency_display = f"[red]{latency}[/red]"
                     
-                    print(f"  ✓ {node_id}: {country_emoji} {latency_display}")
+                    # 清除进度行并显示结果
+                    print(f"\r{' ' * len(progress_line)}", end="", flush=True)
+                    print(f"\r  ✓ {name}: {country_emoji} {latency_display}")
+                    
+                    # 更新进度
+                    progress_line = f"进度: {completed_count}/{total_nodes} 已完成"
+                    if completed_count < total_nodes:
+                        print(f"\r{progress_line}", end="", flush=True)
                     
                 except Exception as e:
-                    print(f"  ✗ {future_to_node[future]}: 检测失败")
+                    completed_count += 1
+                    node_item = future_to_node[future]
+                    node_id = node_item[0]
+                    
+                    # 清除进度行并显示错误
+                    print(f"\r{' ' * len(progress_line)}", end="", flush=True)
+                    print(f"\r  ✗ {node_id}: 检测失败")
+                    
+                    # 更新进度
+                    progress_line = f"进度: {completed_count}/{total_nodes} 已完成"
+                    if completed_count < total_nodes:
+                        print(f"\r{progress_line}", end="", flush=True)
         
         # 保存更新的缓存
         self._save_cache(cache_file, cache_data)
         
-        if updated_count > 0:
+        # 清除进度行
+        print(f"\r{' ' * len(progress_line)}", end="", flush=True)
+        print()
+        
+        if completed_count > 0:
+            rich_menu.print_success(f"已完成 {completed_count} 个节点的检测")
             print()
-            from rich_menu import RichMenu
-            rich_menu = RichMenu()
-            rich_menu.print_success(f"已完成 {updated_count} 个节点的检测，缓存已更新")
-            rich_menu.print_info("再次运行 'python3 sing.py nodes' 查看完整结果")
+            rich_menu.print_info("更新后的节点列表:")
+            
+            # 重新显示更新后的表格
+            self._display_nodes_table(all_nodes, current_node, cache_data, rich_menu)
     
     def _get_country_flag(self, country: str) -> str:
-        """获取国家对应的旗帜emoji"""
-        flag_map = {
-            # 中文国家名
-            '中国': '🇨🇳', '香港': '🇭🇰', '台湾': '🇹🇼', '澳门': '🇲🇴',
-            '日本': '🇯🇵', '韩国': '🇰🇷', '新加坡': '🇸🇬', '马来西亚': '🇲🇾',
-            '美国': '🇺🇸', '加拿大': '🇨🇦', '英国': '🇬🇧', '德国': '🇩🇪',
-            '法国': '🇫🇷', '意大利': '🇮🇹', '荷兰': '🇳🇱', '俄罗斯': '🇷🇺',
-            '澳大利亚': '🇦🇺', '印度': '🇮🇳', '巴西': '🇧🇷', '泰国': '🇹🇭',
-            '越南': '🇻🇳', '菲律宾': '🇵🇭', '印度尼西亚': '🇮🇩', '土耳其': '🇹🇷',
-            '瑞士': '🇨🇭', '瑞典': '🇸🇪', '挪威': '🇳🇴', '芬兰': '🇫🇮',
-            '丹麦': '🇩🇰', '西班牙': '🇪🇸', '葡萄牙': '🇵🇹', '波兰': '🇵🇱',
-            '捷克': '🇨🇿', '匈牙利': '🇭🇺', '奥地利': '🇦🇹', '比利时': '🇧🇪',
-            '爱尔兰': '🇮🇪', '以色列': '🇮🇱', '阿联酋': '🇦🇪', '南非': '🇿🇦',
-            '阿根廷': '🇦🇷', '智利': '🇨🇱', '墨西哥': '🇲🇽', '埃及': '🇪🇬',
+        """获取国家对应的代码+emoji标志"""
+        country_map = {
+            # 中文国家名称
+            '中国': ('cn', '🇨🇳'),
+            '香港': ('hk', '🇭🇰'), 
+            '台湾': ('tw', '🇹🇼'), 
+            '澳门': ('mo', '🇲🇴'),
+            '日本': ('jp', '🇯🇵'), 
+            '韩国': ('kr', '🇰🇷'), 
+            '新加坡': ('sg', '🇸🇬'), 
+            '马来西亚': ('my', '🇲🇾'),
+            '美国': ('us', '🇺🇸'), 
+            '加拿大': ('ca', '🇨🇦'), 
+            '英国': ('uk', '🇬🇧'), 
+            '德国': ('de', '🇩🇪'),
+            '法国': ('fr', '🇫🇷'), 
+            '荷兰': ('nl', '🇳🇱'), 
+            '俄罗斯': ('ru', '🇷🇺'), 
+            '澳大利亚': ('au', '🇦🇺'),
+            '印度': ('in', '🇮🇳'),
+            '巴西': ('br', '🇧🇷'),
+            '意大利': ('it', '🇮🇹'),
+            '西班牙': ('es', '🇪🇸'),
+            '瑞士': ('ch', '🇨🇭'),
+            '瑞典': ('se', '🇸🇪'),
+            '挪威': ('no', '🇳🇴'),
+            '芬兰': ('fi', '🇫🇮'),
+            '丹麦': ('dk', '🇩🇰'),
+            '波兰': ('pl', '🇵🇱'),
+            '捷克': ('cz', '🇨🇿'),
+            '奥地利': ('at', '🇦🇹'),
+            '比利时': ('be', '🇧🇪'),
+            '爱尔兰': ('ie', '🇮🇪'),
+            '葡萄牙': ('pt', '🇵🇹'),
+            '希腊': ('gr', '🇬🇷'),
+            '土耳其': ('tr', '🇹🇷'),
+            '以色列': ('il', '🇮🇱'),
+            '阿联酋': ('ae', '🇦🇪'),
+            '沙特阿拉伯': ('sa', '🇸🇦'),
+            '南非': ('za', '🇿🇦'),
+            '埃及': ('eg', '🇪🇬'),
+            '泰国': ('th', '🇹🇭'),
+            '印度尼西亚': ('id', '🇮🇩'),
+            '菲律宾': ('ph', '🇵🇭'),
+            '越南': ('vn', '🇻🇳'),
             
-            # 英文国家名
-            'China': '🇨🇳', 'Hong Kong': '🇭🇰', 'Taiwan': '🇹🇼', 'Macao': '🇲🇴',
-            'Japan': '🇯🇵', 'South Korea': '🇰🇷', 'Singapore': '🇸🇬', 'Malaysia': '🇲🇾',
-            'United States': '🇺🇸', 'Canada': '🇨🇦', 'United Kingdom': '🇬🇧', 'Germany': '🇩🇪',
-            'France': '🇫🇷', 'Italy': '🇮🇹', 'Netherlands': '🇳🇱', 'Russia': '🇷🇺',
-            'Australia': '🇦🇺', 'India': '🇮🇳', 'Brazil': '🇧🇷', 'Thailand': '🇹🇭',
-            'Vietnam': '🇻🇳', 'Philippines': '🇵🇭', 'Indonesia': '🇮🇩', 'Turkey': '🇹🇷',
-            'Switzerland': '🇨🇭', 'Sweden': '🇸🇪', 'Norway': '🇳🇴', 'Finland': '🇫🇮',
-            'Denmark': '🇩🇰', 'Spain': '🇪🇸', 'Portugal': '🇵🇹', 'Poland': '🇵🇱',
-            'Czech Republic': '🇨🇿', 'Hungary': '🇭🇺', 'Austria': '🇦🇹', 'Belgium': '🇧🇪',
-            'Ireland': '🇮🇪', 'Israel': '🇮🇱', 'United Arab Emirates': '🇦🇪', 'South Africa': '🇿🇦',
-            'Argentina': '🇦🇷', 'Chile': '🇨🇱', 'Mexico': '🇲🇽', 'Egypt': '🇪🇬',
+            # 英文国家名称（API返回的格式）
+            'China': ('cn', '🇨🇳'),
+            'Hong Kong': ('hk', '🇭🇰'),
+            'Taiwan': ('tw', '🇹🇼'),
+            'Macau': ('mo', '🇲🇴'),
+            'Japan': ('jp', '🇯🇵'),
+            'South Korea': ('kr', '🇰🇷'),
+            'Singapore': ('sg', '🇸🇬'),
+            'Malaysia': ('my', '🇲🇾'),
+            'United States': ('us', '🇺🇸'),
+            'Canada': ('ca', '🇨🇦'),
+            'United Kingdom': ('uk', '🇬🇧'),
+            'Germany': ('de', '🇩🇪'),
+            'France': ('fr', '🇫🇷'),
+            'Netherlands': ('nl', '🇳🇱'),
+            'Russia': ('ru', '🇷🇺'),
+            'Australia': ('au', '🇦🇺'),
+            'India': ('in', '🇮🇳'),
+            'Brazil': ('br', '🇧🇷'),
+            'Italy': ('it', '🇮🇹'),
+            'Spain': ('es', '🇪🇸'),
+            'Switzerland': ('ch', '🇨🇭'),
+            'Sweden': ('se', '🇸🇪'),
+            'Norway': ('no', '🇳🇴'),
+            'Finland': ('fi', '🇫🇮'),
+            'Denmark': ('dk', '🇩🇰'),
+            'Poland': ('pl', '🇵🇱'),
+            'Czech Republic': ('cz', '🇨🇿'),
+            'Austria': ('at', '🇦🇹'),
+            'Belgium': ('be', '🇧🇪'),
+            'Ireland': ('ie', '🇮🇪'),
+            'Portugal': ('pt', '🇵🇹'),
+            'Greece': ('gr', '🇬🇷'),
+            'Turkey': ('tr', '🇹🇷'),
+            'Israel': ('il', '🇮🇱'),
+            'United Arab Emirates': ('ae', '🇦🇪'),
+            'Saudi Arabia': ('sa', '🇸🇦'),
+            'South Africa': ('za', '🇿🇦'),
+            'Egypt': ('eg', '🇪🇬'),
+            'Thailand': ('th', '🇹🇭'),
+            'Indonesia': ('id', '🇮🇩'),
+            'Philippines': ('ph', '🇵🇭'),
+            'Vietnam': ('vn', '🇻🇳'),
             
-            # 特殊情况
-            '本地': '🏠', '未知': '🌍', 'localhost': '🏠', 'unknown': '🌍'
+            # 特殊状态
+            '本地': ('local', '🏠'),
+            '未知': ('unknown', '🌐')
         }
-        return flag_map.get(country, '🌍')
+        
+        code, emoji = country_map.get(country, ('unknown', '🌐'))
+        return f"{code}{emoji}"
     
     def _load_cache(self, cache_file: Path) -> dict:
-        """加载缓存数据"""
+        """加载缓存文件"""
         try:
             if cache_file.exists():
                 with open(cache_file, 'r', encoding='utf-8') as f:
                     return json.load(f)
-        except Exception as e:
-            self.logger.warn(f"加载缓存失败: {e}")
+        except Exception:
+            pass
         return {}
     
     def _save_cache(self, cache_file: Path, cache_data: dict):
-        """保存缓存数据"""
+        """保存缓存文件"""
         try:
             cache_file.parent.mkdir(parents=True, exist_ok=True)
             with open(cache_file, 'w', encoding='utf-8') as f:
-                json.dump(cache_data, f, ensure_ascii=False, indent=2)
-        except Exception as e:
-            self.logger.warn(f"保存缓存失败: {e}")
+                json.dump(cache_data, f, indent=2, ensure_ascii=False)
+        except Exception:
+            pass
     
     def _get_cache_key(self, node_info: dict) -> str:
         """生成缓存键"""
@@ -336,16 +566,12 @@ class NodeManager:
         
         # 测试延迟
         try:
-            is_connected, response_time = self._test_tcp_connection(server, port, timeout=3)
-            if is_connected and response_time is not None:
-                latency = int(response_time * 1000)  # 转换为毫秒
-                # 限制最大显示延迟
-                if latency > 5000:
-                    latency = 'timeout'
-            else:
+            # 使用 ping 命令测试延迟
+            latency = self._ping_test(server, timeout=5)
+            if latency is None:
                 latency = 'timeout'
         except Exception:
-            latency = 'error'
+            latency = '待测试'
         
         # 获取国别信息
         country = self._get_server_country(server)
@@ -353,33 +579,140 @@ class NodeManager:
         return country, latency
     
     def _get_server_country(self, server: str) -> str:
-        """获取服务器国别"""
-        if server in ['localhost', '127.0.0.1', '0.0.0.0']:
-            return '本地'
-        
+        """获取服务器国别信息"""
         try:
-            # 使用ip-api.com获取地理位置信息
-            response = requests.get(f"http://ip-api.com/json/{server}", timeout=5)
-            if response.status_code == 200:
-                data = response.json()
-                if data.get('status') == 'success':
-                    country = data.get('country', '未知')
+            # 简单的国家判断逻辑，基于域名或IP
+            if not server:
+                return '本地'
+            
+            # 本地地址
+            if server in ['localhost', '127.0.0.1', '::1'] or server.startswith('192.168.') or server.startswith('10.'):
+                return '本地'
+            
+            # 使用IP地理位置查询API
+            import requests
+            
+            try:
+                # 使用ip-api.com (免费且可靠)
+                response = requests.get(f"http://ip-api.com/json/{server}?fields=country,status", timeout=10)
+                if response.status_code == 200:
+                    data = response.json()
+                    if data.get('status') == 'success':
+                        country = data.get('country', '')
+                        if country and country.strip():
+                            return country.strip()
+            except Exception:
+                pass
+            
+            # 如果API失败，根据域名后缀简单判断
+            if '.' in server:
+                tld = server.split('.')[-1].lower()
+                tld_map = {
+                    'cn': '中国', 'jp': '日本', 'kr': '韩国', 'sg': '新加坡',
+                    'hk': '香港', 'tw': '台湾', 'us': '美国', 'uk': '英国',
+                    'de': '德国', 'fr': '法国', 'ca': '加拿大', 'au': '澳大利亚',
+                    'nl': '荷兰', 'ru': '俄罗斯', 'br': '巴西', 'in': '印度'
+                }
+                country = tld_map.get(tld)
+                if country:
                     return country
+            
+            return '未知'
         except Exception:
-            pass
+            return '未知'
+    
+    def _test_tcp_connection(self, server: str, port: int, timeout: int = 5) -> tuple:
+        """测试TCP连接
         
-        # 备用方案：根据域名猜测
-        domain_country_map = {
-            '.jp': '日本', '.kr': '韩国', '.hk': '香港', '.tw': '台湾',
-            '.sg': '新加坡', '.us': '美国', '.uk': '英国', '.de': '德国',
-            '.fr': '法国', '.ca': '加拿大', '.au': '澳大利亚'
-        }
+        Args:
+            server: 服务器地址
+            port: 端口号
+            timeout: 超时时间（秒）
+            
+        Returns:
+            tuple: (是否连接成功, 延迟时间毫秒)
+        """
+        try:
+            import time
+            start_time = time.time()
+            
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(timeout)
+            
+            result = sock.connect_ex((server, port))
+            
+            end_time = time.time()
+            latency = int((end_time - start_time) * 1000)  # 转换为毫秒
+            
+            sock.close()
+            
+            if result == 0:
+                return True, latency
+            else:
+                return False, latency
+                
+        except socket.timeout:
+            return False, timeout * 1000
+        except socket.gaierror:
+            # DNS解析失败
+            return False, None
+        except Exception:
+            return False, None
+
+    def _test_https_connection(self, server: str, port: int, timeout: int = 5) -> tuple:
+        """测试HTTPS连接（用于WebSocket节点）
         
-        for suffix, country in domain_country_map.items():
-            if suffix in server.lower():
-                return country
-        
-        return '未知'
+        Args:
+            server: 服务器地址
+            port: 端口号
+            timeout: 超时时间（秒）
+            
+        Returns:
+            tuple: (是否连接成功, 延迟时间毫秒)
+        """
+        try:
+            import time
+            import ssl
+            import socket
+            
+            start_time = time.time()
+            
+            # 创建SSL上下文
+            context = ssl.create_default_context()
+            context.check_hostname = False
+            context.verify_mode = ssl.CERT_NONE
+            
+            # 创建socket并连接
+            sock = socket.create_connection((server, port), timeout=timeout)
+            
+            # 包装为SSL socket
+            ssock = context.wrap_socket(sock, server_hostname=server)
+            
+            # 发送简单的HTTP请求
+            request = f"GET / HTTP/1.1\r\nHost: {server}\r\nConnection: close\r\n\r\n"
+            ssock.send(request.encode())
+            
+            # 读取响应头（只读前几个字节即可）
+            response = ssock.recv(1024)
+            
+            end_time = time.time()
+            latency = int((end_time - start_time) * 1000)  # 转换为毫秒
+            
+            ssock.close()
+            
+            # 检查是否收到有效的HTTP响应
+            if response and (b'HTTP/' in response or b'404' in response or b'200' in response):
+                return True, latency
+            else:
+                return False, latency
+                
+        except socket.timeout:
+            return False, timeout * 1000
+        except socket.gaierror:
+            # DNS解析失败
+            return False, None
+        except Exception:
+            return False, None
     
     def add_local_server_node(self, node_id: str, node_name: str) -> bool:
         """添加本地服务器节点"""
@@ -2081,3 +2414,133 @@ class NodeManager:
                     return {'valid': False, 'error': f'缺少必需字段: {field}'}
         
         return {'valid': True, 'error': None}
+
+    def _async_update_nodes(self, nodes_to_update, cache_file, cache_data):
+        """异步更新节点信息（后台模式）"""
+        import concurrent.futures
+        import sys
+        
+        def update_single_node(node_item):
+            node_id, node_info = node_item
+            country, latency = self._test_node_speed_and_country(node_info)
+            return node_id, country, latency
+        
+        # 使用线程池异步检测
+        with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+            # 提交所有任务
+            future_to_node = {
+                executor.submit(update_single_node, node_item): node_item[0] 
+                for node_item in nodes_to_update
+            }
+            
+            updated_count = 0
+            # 处理完成的任务
+            for future in concurrent.futures.as_completed(future_to_node):
+                try:
+                    node_id, country, latency = future.result()
+                    
+                    # 更新缓存
+                    cache_key = self._get_cache_key(next(info for nid, info in nodes_to_update if nid == node_id))
+                    cache_data[cache_key] = {
+                        'country': country,
+                        'latency': latency,
+                        'timestamp': time.time()
+                    }
+                    
+                    updated_count += 1
+                    
+                    # 显示更新进度
+                    country_emoji = self._get_country_flag(country)
+                    
+                    if isinstance(latency, (int, float)):
+                        if latency < 100:
+                            latency_display = f"{latency}ms (优秀)"
+                        elif latency < 300:
+                            latency_display = f"{latency}ms (良好)"
+                        else:
+                            latency_display = f"{latency}ms (较慢)"
+                    else:
+                        latency_display = str(latency)
+                    
+                    print(f"  ✓ {node_id}: {country_emoji} {latency_display}")
+                    
+                except Exception as e:
+                    print(f"  ✗ {future_to_node[future]}: 检测失败")
+        
+        # 保存更新的缓存
+        self._save_cache(cache_file, cache_data)
+        
+        if updated_count > 0:
+            print()
+            from rich_menu import RichMenu
+            rich_menu = RichMenu()
+            rich_menu.print_success(f"已完成 {updated_count} 个节点的检测，缓存已更新")
+
+    def _ping_test(self, server: str, timeout: int = 5) -> int:
+        """使用ping命令测试服务器延迟
+        
+        Args:
+            server: 服务器地址
+            timeout: 超时时间（秒）
+            
+        Returns:
+            int: 延迟时间（毫秒），如果失败返回None
+        """
+        try:
+            import subprocess
+            import platform
+            import re
+            
+            # 根据操作系统选择ping命令参数
+            os_type = platform.system()
+            if os_type == "Windows":
+                # Windows: ping -n 1 -w 超时时间(毫秒)
+                cmd = ["ping", "-n", "1", "-w", str(timeout * 1000), server]
+            else:
+                # macOS/Linux: ping -c 1 -W 超时时间(秒)
+                cmd = ["ping", "-c", "1", "-W", str(timeout), server]
+            
+            # 执行ping命令
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=timeout + 2  # 给subprocess额外的超时时间
+            )
+            
+            if result.returncode == 0:
+                output = result.stdout
+                
+                # 解析ping输出获取延迟时间
+                if os_type == "Windows":
+                    # Windows输出格式: "时间=XXXms" 或 "time=XXXms"
+                    match = re.search(r'[时间|time]=(\d+)ms', output, re.IGNORECASE)
+                    if match:
+                        latency = float(match.group(1))
+                        return int(latency)
+                else:
+                    # macOS/Linux输出格式: "time=XX.X ms" 或 "round-trip min/avg/max = XX/XX/XX"
+                    match = re.search(r'time=(\d+\.?\d*)\s*ms', output, re.IGNORECASE)
+                    if match:
+                        latency = float(match.group(1))
+                        return int(latency)
+                    
+                    # 尝试解析round-trip格式: "round-trip min/avg/max/stddev = XX.XX/XX.XX/XX.XX"
+                    match = re.search(r'round-trip.*?=\s*(\d+\.?\d*)/(\d+\.?\d*)/(\d+\.?\d*)', output, re.IGNORECASE)
+                    if match:
+                        # 使用平均值（第二个数值）
+                        latency = float(match.group(2))
+                        return int(latency)
+                
+                # 如果无法解析延迟，但ping成功，返回一个估计值
+                return 100  # 默认100ms
+            else:
+                # ping失败
+                return None
+                
+        except subprocess.TimeoutExpired:
+            # ping超时
+            return None
+        except Exception:
+            # 其他错误
+            return None
