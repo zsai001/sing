@@ -151,9 +151,14 @@ class ServiceManager:
         <string>true</string>
     </dict>
     <key>RunAtLoad</key>
-    <true/>
+    <false/>
     <key>KeepAlive</key>
-    <true/>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+        <key>Crashed</key>
+        <true/>
+    </dict>
     <key>WorkingDirectory</key>
     <string>{self.paths.config_dir}</string>
     <key>StandardOutPath</key>
@@ -178,6 +183,11 @@ class ServiceManager:
         """检查服务状态 (is_running, status_text)"""
         if self.paths.os_type == "Darwin":
             try:
+                # 首先检查是否有任何sing-box进程在运行
+                result = subprocess.run(["pgrep", "-f", "sing-box"], 
+                                      capture_output=True, text=True)
+                has_process = result.returncode == 0 and result.stdout.strip()
+                
                 # 检查服务是否已加载
                 result = subprocess.run(["launchctl", "list", self.paths.service_name], 
                                       capture_output=True, text=True)
@@ -195,15 +205,20 @@ class ServiceManager:
                         
                         if pid_match:
                             pid = int(pid_match.group(1))
-                            return True, f"{Colors.GREEN}运行中{Colors.NC}"
+                            return True, f"{Colors.GREEN}运行中 (通过服务){Colors.NC}"
                         elif exit_status_match:
                             exit_status = int(exit_status_match.group(1))
-                            if exit_status != 0:
+                            if has_process:
+                                return True, f"{Colors.YELLOW}运行中 (孤儿进程){Colors.NC}"
+                            elif exit_status != 0:
                                 return False, f"{Colors.RED}启动失败 (退出码: {exit_status}){Colors.NC}"
                             else:
                                 return False, f"{Colors.YELLOW}已加载但未运行{Colors.NC}"
                         else:
-                            return False, f"{Colors.YELLOW}已加载但未运行{Colors.NC}"
+                            if has_process:
+                                return True, f"{Colors.YELLOW}运行中 (孤儿进程){Colors.NC}"
+                            else:
+                                return False, f"{Colors.YELLOW}已加载但未运行{Colors.NC}"
                     
                     # 处理表格格式输出（旧版本或某些情况）
                     lines = output.split('\n')
@@ -214,16 +229,34 @@ class ServiceManager:
                                 pid = parts[0]
                                 status = parts[1]
                                 if pid.isdigit():
-                                    return True, f"{Colors.GREEN}运行中{Colors.NC}"
+                                    return True, f"{Colors.GREEN}运行中 (通过服务){Colors.NC}"
                                 elif pid == "-":
-                                    if status == "0":
+                                    if has_process:
+                                        return True, f"{Colors.YELLOW}运行中 (孤儿进程){Colors.NC}"
+                                    elif status == "0":
                                         return False, f"{Colors.YELLOW}已加载但未运行{Colors.NC}"
                                     else:
                                         return False, f"{Colors.RED}启动失败 (退出码: {status}){Colors.NC}"
-                    return False, f"{Colors.YELLOW}未加载{Colors.NC}"
+                    
+                    if has_process:
+                        return True, f"{Colors.YELLOW}运行中 (孤儿进程){Colors.NC}"
+                    else:
+                        return False, f"{Colors.YELLOW}未加载{Colors.NC}"
                 else:
-                    return False, f"{Colors.YELLOW}未加载{Colors.NC}"
+                    # 服务未加载，但检查是否有进程运行
+                    if has_process:
+                        return True, f"{Colors.YELLOW}运行中 (孤儿进程){Colors.NC}"
+                    else:
+                        return False, f"{Colors.YELLOW}未加载{Colors.NC}"
             except subprocess.CalledProcessError:
+                # 出错时也检查是否有进程运行
+                try:
+                    result = subprocess.run(["pgrep", "-f", "sing-box"], 
+                                          capture_output=True, text=True)
+                    if result.returncode == 0 and result.stdout.strip():
+                        return True, f"{Colors.YELLOW}运行中 (检查异常){Colors.NC}"
+                except:
+                    pass
                 return False, f"{Colors.RED}检查失败{Colors.NC}"
         else:
             try:
@@ -293,13 +326,96 @@ class ServiceManager:
         
         if self.paths.os_type == "Darwin":
             try:
+                # 检查系统级别的LaunchDaemon
+                system_plist = f"/Library/LaunchDaemons/{self.paths.service_name}.plist"
+                has_system_service = os.path.exists(system_plist)
+                
+                # 首先尝试通过launchctl停止用户级别的服务
                 is_running, _ = self.check_service_status()
                 if is_running:
                     subprocess.run(["launchctl", "unload", str(self.paths.plist_path)], 
                                  capture_output=True)
-                    self.logger.info("✓ sing-box 服务已停止")
+                    time.sleep(1)  # 等待服务停止
+                
+                # 如果有系统级别的服务，也要停止它
+                if has_system_service:
+                    self.logger.info("检测到系统级别的服务，正在停止...")
+                    try:
+                        subprocess.run(["sudo", "launchctl", "unload", system_plist], 
+                                     capture_output=True, check=True)
+                        self.logger.info("✓ 系统级别服务已停止")
+                        time.sleep(1)
+                    except subprocess.CalledProcessError as e:
+                        self.logger.warn(f"停止系统级别服务失败: {e}")
+                
+                # 检查是否还有sing-box进程在运行（包括孤儿进程）
+                result = subprocess.run(["pgrep", "-f", "sing-box"], 
+                                      capture_output=True, text=True)
+                if result.returncode == 0 and result.stdout.strip():
+                    # 发现仍有sing-box进程运行，强制停止
+                    pids = result.stdout.strip().split('\n')
+                    self.logger.warn(f"发现 {len(pids)} 个sing-box进程仍在运行，强制停止...")
+                    
+                    for pid in pids:
+                        try:
+                            # 检查进程是否以root身份运行
+                            ps_result = subprocess.run(["ps", "-p", pid, "-o", "user="], 
+                                                     capture_output=True, text=True)
+                            if ps_result.returncode == 0:
+                                user = ps_result.stdout.strip()
+                                if user == "root":
+                                    # 使用sudo杀死root进程
+                                    subprocess.run(["sudo", "kill", "-TERM", pid], 
+                                                 capture_output=True, check=True)
+                                    self.logger.info(f"已发送TERM信号给root进程 {pid}")
+                                else:
+                                    # 普通用户进程
+                                    subprocess.run(["kill", "-TERM", pid], 
+                                                 capture_output=True, check=True)
+                                    self.logger.info(f"已发送TERM信号给进程 {pid}")
+                        except subprocess.CalledProcessError:
+                            pass
+                    
+                    # 等待进程正常退出
+                    time.sleep(2)
+                    
+                    # 再次检查，如果仍在运行则强制杀死
+                    result = subprocess.run(["pgrep", "-f", "sing-box"], 
+                                          capture_output=True, text=True)
+                    if result.returncode == 0 and result.stdout.strip():
+                        remaining_pids = result.stdout.strip().split('\n')
+                        self.logger.warn(f"仍有 {len(remaining_pids)} 个进程未退出，强制杀死...")
+                        
+                        for pid in remaining_pids:
+                            try:
+                                # 检查进程是否以root身份运行
+                                ps_result = subprocess.run(["ps", "-p", pid, "-o", "user="], 
+                                                         capture_output=True, text=True)
+                                if ps_result.returncode == 0:
+                                    user = ps_result.stdout.strip()
+                                    if user == "root":
+                                        # 使用sudo强制杀死root进程
+                                        subprocess.run(["sudo", "kill", "-KILL", pid], 
+                                                     capture_output=True, check=True)
+                                        self.logger.info(f"已强制杀死root进程 {pid}")
+                                    else:
+                                        # 普通用户进程
+                                        subprocess.run(["kill", "-KILL", pid], 
+                                                     capture_output=True, check=True)
+                                        self.logger.info(f"已强制杀死进程 {pid}")
+                            except subprocess.CalledProcessError:
+                                pass
+                
+                # 最终检查
+                time.sleep(1)
+                result = subprocess.run(["pgrep", "-f", "sing-box"], 
+                                      capture_output=True, text=True)
+                if result.returncode == 0 and result.stdout.strip():
+                    self.logger.error("仍有sing-box进程在运行，请手动检查")
+                    return False
                 else:
-                    self.logger.warn("sing-box 服务未运行")
+                    self.logger.info("✓ sing-box 服务已完全停止")
+                
                 return True
             except subprocess.CalledProcessError as e:
                 self.logger.error(f"停止服务失败: {e}")
@@ -371,10 +487,20 @@ class ServiceManager:
         # 停止服务
         self.stop_service()
         
-        # 删除服务文件
+        # 删除用户级别的服务文件
         if self.paths.os_type == "Darwin" and self.paths.plist_path.exists():
             self.paths.plist_path.unlink()
-            self.logger.info("✓ 删除服务配置")
+            self.logger.info("✓ 删除用户级别服务配置")
+        
+        # 删除系统级别的服务文件
+        if self.paths.os_type == "Darwin":
+            system_plist = f"/Library/LaunchDaemons/{self.paths.service_name}.plist"
+            if os.path.exists(system_plist):
+                try:
+                    subprocess.run(["sudo", "rm", system_plist], check=True)
+                    self.logger.info("✓ 删除系统级别服务配置")
+                except subprocess.CalledProcessError as e:
+                    self.logger.warn(f"删除系统级别服务配置失败: {e}")
         
         # 删除配置文件
         import shutil

@@ -18,13 +18,60 @@ sing-box macOS 管理工具 v2.0 Python版
 import sys
 import os
 
+# 检查Python版本
+if sys.version_info < (3, 8):
+    print("错误: 需要Python 3.8或更高版本")
+    print(f"当前版本: {sys.version}")
+    sys.exit(1)
+
 # 添加当前目录到Python路径
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from utils import Colors, Logger
-from core import SingToolManager
-from nodes import NodeManager
-from menu import MenuSystem
+# 检查必要的依赖包
+def check_dependencies():
+    """检查必要的Python依赖包"""
+    required_packages = {
+        'rich': 'rich>=13.0.0',
+        'requests': 'requests>=2.28.0',
+        'yaml': 'PyYAML>=6.0'
+    }
+    
+    missing_packages = []
+    
+    for package, requirement in required_packages.items():
+        try:
+            if package == 'yaml':
+                import yaml
+            else:
+                __import__(package)
+        except ImportError:
+            missing_packages.append(requirement)
+    
+    if missing_packages:
+        print("错误: 缺少必要的Python包:")
+        for package in missing_packages:
+            print(f"  - {package}")
+        print()
+        print("请安装缺少的包:")
+        print(f"  pip install {' '.join(missing_packages)}")
+        print()
+        print("或者如果您使用虚拟环境:")
+        print("  source venv/bin/activate")
+        print(f"  pip install {' '.join(missing_packages)}")
+        sys.exit(1)
+
+# 检查依赖
+check_dependencies()
+
+try:
+    from utils import Colors, Logger
+    from core import SingToolManager
+    from nodes import NodeManager
+    from menu import MenuSystem
+except ImportError as e:
+    print(f"错误: 无法导入模块 - {e}")
+    print("请确保所有模块文件都在同一目录下")
+    sys.exit(1)
 
 
 def main():
@@ -96,6 +143,9 @@ def main():
         sys.exit(0)
     except Exception as e:
         print(f"{Colors.RED}发生错误: {e}{Colors.NC}")
+        if "--debug" in sys.argv:
+            import traceback
+            traceback.print_exc()
         sys.exit(1)
 
 
