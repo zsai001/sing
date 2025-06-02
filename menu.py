@@ -1055,30 +1055,27 @@ class MenuSystem:
         print(f"{Colors.CYAN}⚙️  分流设置{Colors.NC}")
         print()
         
-        current_final = routing_config.get("final_outbound", "proxy")
-        enabled_rules = routing_config.get("enabled_rules", [])
-        
-        print(f"当前配置:")
-        print(f"  默认出站: {current_final}")
-        print(f"  启用的规则组: {len(enabled_rules)} 个")
+        current_final = routing_config.get("final_outbound", "🚀 节点选择")
+        # 显示实际使用的outbound名称
+        display_final = "🚀 节点选择" if current_final == "🚀 节点选择" else current_final
+        print(f"当前默认出站: {current_final}")
         print()
         
-        print("1. 🎯 设置默认出站")
-        print("2. ✅ 管理规则组启用状态")
-        print("3. 🔀 完整分流管理")
-        print("4. 💾 保存并返回")
+        print("1. 设置默认出站")
+        print("2. 规则组启用/禁用")
+        print("3. 备份与恢复")
+        print("4. 返回上级")
         
         choice = input("请选择 [1-4]: ").strip()
         
         if choice == "1":
-            print()
             print("默认出站选项:")
-            print("1. proxy - 走代理 (未匹配规则的流量)")
+            print("1. 🚀 节点选择 - 走代理")
             print("2. direct - 直连")
             print("3. block - 拦截")
             
             outbound_choice = input("请选择 [1-3]: ").strip()
-            outbound_map = {"1": "proxy", "2": "direct", "3": "block"}
+            outbound_map = {"1": "🚀 节点选择", "2": "direct", "3": "block"}
             new_outbound = outbound_map.get(outbound_choice)
             
             if new_outbound:

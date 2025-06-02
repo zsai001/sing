@@ -97,7 +97,7 @@ class NodeManager:
             if config_status['error']:
                 rich_menu.print_warning(f"错误信息: {config_status['error']}")
         
-        # 显示初始表格
+        # 显示节点表格
         self._display_nodes_table(nodes, current_node, cache_data, rich_menu)
         
         # 显示配置错误的详细信息
@@ -114,13 +114,30 @@ class NodeManager:
                 rich_menu.print_error(f"  {name} ({node_id}): {error}")
         
         print()
-        rich_menu.print_info("🔄 开始动态刷新节点状态...")
-        rich_menu.print_warning("按 Ctrl+C 退出监控")
+        rich_menu.print_info("节点操作选项:")
+        print("1. 🔄 开始测试节点")
+        print("0. 🔙 返回上级菜单")
         print()
         
-        # 开始动态刷新
-        self._start_dynamic_refresh(nodes, current_node, cache_file, cache_data, rich_menu)
-
+        while True:
+            choice = rich_menu.prompt_choice("请选择操作 [0-1]")
+            
+            if choice == "1":
+                # 开始测试节点
+                print()
+                rich_menu.print_info("🔄 开始动态刷新节点状态...")
+                rich_menu.print_warning("按回车键退出监控")
+                print()
+                self._start_dynamic_refresh(nodes, current_node, cache_file, cache_data, rich_menu)
+                break
+                
+            elif choice == "0":
+                # 返回上级菜单
+                break
+                
+            else:
+                rich_menu.print_error("无效选项，请重新选择")
+    
     def _start_dynamic_refresh(self, nodes, current_node, cache_file, cache_data, rich_menu):
         """开始动态刷新节点状态"""
         import time
@@ -965,6 +982,25 @@ class NodeManager:
         self.save_nodes_config(config)
         
         self.logger.info(f"✓ 已切换到节点: {target_node_id}")
+        
+        # 重新生成配置并重启服务
+        try:
+            from core import SingToolManager
+            manager = SingToolManager()
+            self.logger.info("正在重新生成配置...")
+            if manager.create_main_config():
+                self.logger.info("正在重启服务...")
+                if manager.restart_service():
+                    self.logger.info("✓ 节点切换完成，服务已重启")
+                else:
+                    self.logger.warn("⚠️  配置已更新，但服务重启失败，请手动重启")
+            else:
+                self.logger.error("配置生成失败")
+                return False
+        except Exception as e:
+            self.logger.error(f"重新生成配置时出错: {e}")
+            self.logger.warn("请手动重新生成配置并重启服务")
+        
         return True
     
     def delete_node(self, node_name: str = None) -> bool:
@@ -1273,13 +1309,6 @@ class NodeManager:
         
         print()
         self.logger.info(f"✓ Trojan 节点添加成功: {node_name}")
-        
-        # 提示连接测试
-        test_now = input(f"{Colors.YELLOW}是否现在测试节点连通性? (Y/n): {Colors.NC}").strip().lower()
-        if not test_now or test_now.startswith('y'):
-            print()
-            self.test_node_connectivity(node_id)
-        
         return True
     
     def add_vless_node(self, node_id: str, node_name: str) -> bool:
